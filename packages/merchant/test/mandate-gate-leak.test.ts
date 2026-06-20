@@ -45,11 +45,18 @@ function b64(obj: unknown): string {
   return Buffer.from(JSON.stringify(obj)).toString("base64");
 }
 
-function fakeReq(nonce: string) {
+function fakeReq(opts: { nonce: string; from?: string; value?: string }) {
   const headers: Record<string, string> = {
     "x-authorization-mandate": b64(intent),
     "x-payment": b64({
-      payload: { authorization: { from: AGENT, to: MERCHANT, value: PRICE.toString(), nonce } },
+      payload: {
+        authorization: {
+          from: opts.from ?? AGENT,
+          to: MERCHANT,
+          value: opts.value ?? PRICE.toString(),
+          nonce: opts.nonce,
+        },
+      },
     }),
   };
   return {
@@ -82,7 +89,7 @@ describe("mandate gate reservation lifecycle", () => {
       network: X402_NETWORK,
       ledger,
     });
-    const req = fakeReq("0xnonce-leak");
+    const req = fakeReq({ nonce: "0xnonce-leak" });
     const res = fakeRes();
     const next = vi.fn();
 
@@ -105,7 +112,7 @@ describe("mandate gate reservation lifecycle", () => {
       network: X402_NETWORK,
       ledger,
     });
-    const req = fakeReq("0xnonce-ok");
+    const req = fakeReq({ nonce: "0xnonce-ok" });
     const res = fakeRes();
 
     await gate(req, res, vi.fn());
@@ -114,5 +121,42 @@ describe("mandate gate reservation lifecycle", () => {
     res.statusCode = 200; // authorized; commit/release happens via settle hooks
     res.emit("finish");
     expect(ledger.total(intent.id)).toBe(PRICE);
+  });
+});
+
+describe("mandate gate rejects out-of-scope paid requests", () => {
+  const makeGate = (ledger: IntentSpendLedger) =>
+    createMandateGate({
+      verifier,
+      merchant: MERCHANT,
+      asset: USDC_ADDRESS,
+      network: X402_NETWORK,
+      ledger,
+    });
+
+  it("rejects a payer that is not the authorized agent wallet (403)", async () => {
+    const ledger = new IntentSpendLedger();
+    const gate = makeGate(ledger);
+    const res = fakeRes();
+    const next = vi.fn();
+    await gate(
+      fakeReq({ nonce: "0xwrong-payer", from: "0x9999999999999999999999999999999999999999" }),
+      res,
+      next,
+    );
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(ledger.total(intent.id)).toBe(0n); // nothing reserved
+  });
+
+  it("rejects underpayment vs the catalog price (403)", async () => {
+    const ledger = new IntentSpendLedger();
+    const gate = makeGate(ledger);
+    const res = fakeRes();
+    const next = vi.fn();
+    await gate(fakeReq({ nonce: "0xunderpay", value: "1000000" }), res, next); // pays $1.00 for a $1.50 item
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(ledger.total(intent.id)).toBe(0n);
   });
 });

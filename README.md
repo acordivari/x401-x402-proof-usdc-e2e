@@ -10,6 +10,13 @@ authorized this agent to spend, and within what scope?**
 > faucet test USDC. The agent signs with a headless **Coinbase CDP Server
 > Wallet** (or a throwaway viem key) — your MetaMask is never connected.
 
+## Docs
+
+- **[Architecture & Decisions](docs/ARCHITECTURE.md)** — the product-owner's
+  "what & why": problem, concepts, decision log, safety guarantees.
+- **[HAM Protocol Spec](docs/HAM-PROTOCOL.md)** — the Human Authorization Mandate
+  data model, verification rules, and threat model.
+
 ## Why TypeScript
 
 The entire official x402 v2 stack (`@x402/express`, `@x402/evm`, `@x402/fetch`,
@@ -84,7 +91,8 @@ npm run typecheck # tsc --noEmit, strict
   (live Base Sepolia pending CDP key + faucet USDC)
 - ✅ **Phase 2** — OIDC identity + HAM enforcement (Auth0 = one-line swap)
 - ✅ **Phase 3** — buyer/merchant UX consoles (`npm run console`)
-- ⏳ **Phase 4** — hardening, HAM spec doc, skill capture
+- ✅ **Phase 4** — docs ([architecture](docs/ARCHITECTURE.md) +
+  [HAM spec](docs/HAM-PROTOCOL.md)), edge-case tests, `swappable-seams` skill
 
 ## Required to run the live testnet path (Phase 1)
 
