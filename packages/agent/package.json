@@ -1,0 +1,21 @@
+{
+  "name": "@agentic-payments/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/buyer.ts"
+  },
+  "scripts": {
+    "start": "tsx src/buyer.ts"
+  },
+  "dependencies": {
+    "@agentic-payments/shared": "*",
+    "@coinbase/cdp-sdk": "^1.51.2",
+    "@x402/core": "^2.16.0",
+    "@x402/evm": "^2.16.0",
+    "@x402/fetch": "^2.16.0",
+    "viem": "^2.21.55",
+    "zod": "^3.24.1"
+  }
+}

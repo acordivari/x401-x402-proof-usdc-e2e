@@ -1,0 +1,27 @@
+{
+  "name": "agentic-payments",
+  "version": "0.1.0",
+  "private": true,
+  "description": "x402 agentic payments sandbox with human-identity authorization (HAM protocol)",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "merchant": "tsx packages/merchant/src/server.ts",
+    "agent": "tsx packages/agent/src/buyer.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
