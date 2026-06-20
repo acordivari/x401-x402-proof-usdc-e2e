@@ -9,6 +9,7 @@
  * the CDP Server Wallet and real Base Sepolia settlement).
  */
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import {
   validateRequirementsBeforePaying,
   PaymentRequiredResponse,
@@ -128,7 +129,7 @@ async function pollOrder(
   return undefined;
 }
 
-const isMain = process.argv[1]?.endsWith("buyer.ts");
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   const merchantUrl = process.env.MERCHANT_URL ?? "http://localhost:4021";
   const sku = process.argv[2] ?? process.env.SKU ?? "allergy-relief-24";

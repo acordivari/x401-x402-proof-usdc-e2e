@@ -12,6 +12,7 @@
  * Run: `npm run merchant`  (FACILITATOR_MODE=mock needs no key or funds).
  */
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import express, { type Request, type Response } from "express";
 import { x402ResourceServer, type RoutesConfig } from "@x402/core/server";
 import { registerExactEvmScheme } from "@x402/evm/exact/server";
@@ -107,6 +108,10 @@ export function createMerchantApp(
     res.json({ products: CATALOG, payTo: config.payTo, network: config.network });
   });
 
+  app.get("/orders", (_req, res) => {
+    res.json({ orders: orders.all().sort((a, b) => b.updatedAt - a.updatedAt) });
+  });
+
   app.get("/orders/:id", (req, res) => {
     const order = orders.get(req.params.id ?? "");
     if (!order) return res.status(404).json({ error: "order not found" });
@@ -192,8 +197,8 @@ export function createMerchantApp(
   return { app, orders, config };
 }
 
-// Boot when run directly.
-const isMain = process.argv[1]?.endsWith("server.ts");
+// Boot only when this file is the process entry point (not when imported).
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   const { app, config } = createMerchantApp();
   app.listen(config.port, () => {

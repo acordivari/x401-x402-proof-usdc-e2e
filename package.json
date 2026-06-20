@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "merchant": "tsx packages/merchant/src/server.ts",
-    "agent": "tsx packages/agent/src/buyer.ts"
+    "agent": "tsx packages/agent/src/buyer.ts",
+    "console": "tsx apps/console/src/server.ts"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

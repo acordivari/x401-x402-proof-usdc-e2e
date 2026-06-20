@@ -32,9 +32,23 @@ packages/
               #   facilitator/    — FacilitatorClient seam:
               #       mock.ts      — offline facilitator (synthetic settlement)
               #       resilient.ts — retry + per-nonce idempotency + transaction lock
-  agent/      # headless buyer agent (CDP Server Wallet -> x402 client)   [in progress]
-  identity/   # OIDC + Human Authorization Mandate (HAM)                  [Phase 2]
+  agent/      # headless buyer agent (CDP Server Wallet -> x402 client)
+  identity/   # OIDC verifier (local + Auth0) + HAM signing/verification
+apps/
+  console/    # one-command demo: buyer + merchant consoles in the browser
 ```
+
+## Demo console
+
+```bash
+npm run console   # then open http://localhost:4040
+```
+
+Boots the mock-CVS merchant in-process with mandate enforcement, the local OIDC
+issuer, and the headless agent. In the browser: sign in (OIDC) → authorize the
+agent by signing an Intent (cap + categories + expiry) → shop. In-scope buys
+settle; out-of-scope buys are refused with the reason. The merchant panel shows
+live orders with their state-machine status and settlement tx.
 
 ### Safety guarantees (validated by tests)
 
@@ -65,11 +79,12 @@ npm run typecheck # tsc --noEmit, strict
 
 ## Status
 
-- ✅ **Phase 0** — DRY shared core + state machine + validators (tested)
-- 🚧 **Phase 1** — x402 payment slice (merchant settlement core done; agent +
-  live Base Sepolia settlement pending CDP key + faucet USDC)
-- ⏳ **Phase 2** — OIDC identity + HAM enforcement
-- ⏳ **Phase 3** — buyer/merchant UX consoles
+- ✅ **Phase 0** — DRY shared core + state machine + validators
+- ✅ **Phase 1** — x402 payment slice; offline E2E settles via mock facilitator
+  (live Base Sepolia pending CDP key + faucet USDC)
+- ✅ **Phase 2** — OIDC identity + HAM enforcement (Auth0 = one-line swap)
+- ✅ **Phase 3** — buyer/merchant UX consoles (`npm run console`)
+- ⏳ **Phase 4** — hardening, HAM spec doc, skill capture
 
 ## Required to run the live testnet path (Phase 1)
 
