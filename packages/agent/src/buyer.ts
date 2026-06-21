@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
+  loadEnv,
   validateRequirementsBeforePaying,
   PaymentRequiredResponse,
 } from "@agentic-payments/shared";
@@ -115,8 +116,8 @@ export async function runPurchase(opts: PurchaseOptions): Promise<PurchaseResult
 async function pollOrder(
   merchantUrl: string,
   nonce: string,
-  attempts = 10,
-  delayMs = 200,
+  attempts = 40, // generous: real on-chain settlement can take several seconds
+  delayMs = 500,
 ): Promise<unknown> {
   for (let i = 0; i < attempts; i++) {
     const r = await fetch(`${merchantUrl}/orders/by-nonce/${nonce}`);
@@ -131,6 +132,7 @@ async function pollOrder(
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
+  loadEnv();
   const merchantUrl = process.env.MERCHANT_URL ?? "http://localhost:4021";
   const sku = process.argv[2] ?? process.env.SKU ?? "allergy-relief-24";
   runPurchase({ merchantUrl, sku, rpcUrl: process.env.BASE_SEPOLIA_RPC_URL })

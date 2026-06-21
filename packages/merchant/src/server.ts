@@ -17,6 +17,7 @@ import express, { type Request, type Response } from "express";
 import { x402ResourceServer, type RoutesConfig } from "@x402/core/server";
 import { registerExactEvmScheme } from "@x402/evm/exact/server";
 import { paymentMiddleware } from "@x402/express";
+import { loadEnv } from "@agentic-payments/shared";
 import { CATALOG, findProduct, productPriceAtomic } from "./catalog.ts";
 import {
   assertConfigValid,
@@ -200,6 +201,7 @@ export function createMerchantApp(
 // Boot only when this file is the process entry point (not when imported).
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
+  loadEnv();
   const { app, config } = createMerchantApp();
   app.listen(config.port, () => {
     console.log(
