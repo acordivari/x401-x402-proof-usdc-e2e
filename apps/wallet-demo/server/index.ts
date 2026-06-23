@@ -16,6 +16,7 @@
  * Run: `npm run demo`  (defaults to PROOF_MODE=local, FACILITATOR_MODE=mock).
  */
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -99,9 +100,18 @@ async function main() {
   });
   const issuerKeys = await generateEs256Keys();
   const localIssuer = new LocalVcIssuer({ issuerId: ISSUER_ID, privateJwk: issuerKeys.privateJwk });
+  // Proof trust: pin the chain to Proof's CA (default = Fairfax issuing CA, baked
+  // into proofVcVerifier). Override the fingerprints or supply a root CA PEM via
+  // env when moving to production.
+  const proofConfig: { expectedIssuer?: string; trustedCaFingerprints?: string[]; trustedRootPems?: string[] } = {};
+  if (process.env.PROOF_ISSUER) proofConfig.expectedIssuer = process.env.PROOF_ISSUER;
+  if (process.env.PROOF_TRUSTED_CA_FINGERPRINTS) {
+    proofConfig.trustedCaFingerprints = process.env.PROOF_TRUSTED_CA_FINGERPRINTS.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  if (process.env.PROOF_TRUSTED_CA_FILE) proofConfig.trustedRootPems = [readFileSync(process.env.PROOF_TRUSTED_CA_FILE, "utf8")];
   const vcVerifier = createVcVerifier(
     MODE === "live"
-      ? { mode: "live", proof: { ...(process.env.PROOF_ISSUER ? { expectedIssuer: process.env.PROOF_ISSUER } : {}) } }
+      ? { mode: "live", proof: proofConfig }
       : { mode: "local", local: { issuerId: ISSUER_ID, issuerPublicJwk: issuerKeys.publicJwk } },
   );
 
@@ -306,6 +316,7 @@ async function main() {
     if (!vpToken) return res.status(400).json({ error: "vpToken required" });
     const product = findProduct(session.sku)!;
     const resource = `${VERIFIER_ID}/buy/${product.sku}`;
+    console.log(`[demo] /api/authorize/complete: vp_token received (len=${String(vpToken).length}) for sku=${product.sku}`);
     try {
       const { artifact } = packPresentation({ payload: session.payload, agentId: signer.address, vpToken });
       const verification = await verifyAuthorization({
@@ -318,6 +329,7 @@ async function main() {
         transactionData: session.transactionData,
       });
       lastVerification = verification;
+      console.log(`[demo] verification:`, JSON.stringify(summarizeVerification(verification)));
       if (!verification.result.ok) {
         return res.status(403).json({ error: "presentation rejected", verification: summarizeVerification(verification) });
       }
@@ -340,7 +352,10 @@ async function main() {
   });
 
   // --- live fragment callback: forward the vp_token from the URL fragment ---
-  app.get("/proof/callback", (_req, res) => res.type("html").send(CALLBACK_HTML));
+  app.get("/proof/callback", (_req, res) => {
+    console.log("[demo] /proof/callback hit (browser will POST the vp_token from the fragment)");
+    res.type("html").send(CALLBACK_HTML);
+  });
 
   // --- pay via x402 with the issued Intent (the existing payment rail) ---
   app.post("/api/buy", async (req, res) => {

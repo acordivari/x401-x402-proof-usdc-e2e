@@ -32,8 +32,8 @@ export interface VcVerifierConfig {
   mode: ProofMode;
   /** local mode: the trusted self-issuer id + public key. */
   local?: { issuerId: string; issuerPublicJwk: Jwk };
-  /** live mode: optionally require an exact Proof issuer (`iss`). */
-  proof?: { expectedIssuer?: string };
+  /** live mode: Proof issuer + CA trust pinning. */
+  proof?: { expectedIssuer?: string; trustedCaFingerprints?: string[]; trustedRootPems?: string[] };
 }
 
 /**

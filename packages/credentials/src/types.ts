@@ -24,8 +24,11 @@ export interface PresentationProof {
    * presentation carried no payment mandate.
    */
   paymentApproved?: unknown;
-  /** Subject/issuer of the issuer's signing certificate (x5c leaf), if present. */
-  issuerCert?: { subject?: string; issuer?: string };
+  /**
+   * The issuer's signing certificate (x5c leaf) and the trusted CA the chain
+   * pinned to, if present. `trustAnchor` undefined means no pinning was enforced.
+   */
+  issuerCert?: { subject?: string; issuer?: string; trustAnchor?: string };
 }
 
 export interface VerifyPresentationInput {

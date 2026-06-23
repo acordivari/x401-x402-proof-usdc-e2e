@@ -229,6 +229,15 @@ describe("verifyAuthorization (x401 challenge + VC + payment binding)", () => {
   });
 });
 
+describe("Proof CA fingerprint normalization", () => {
+  it("strips separators and uppercases, so colon/lowercase pins compare equal", async () => {
+    const { normalizeFingerprint } = await import("../src/index.ts");
+    expect(normalizeFingerprint("fb:15:f0:49")).toBe("FB15F049");
+    expect(normalizeFingerprint("FB15F049")).toBe("FB15F049");
+    expect(normalizeFingerprint("fb 15 f0 49")).toBe("FB15F049");
+  });
+});
+
 describe("Proof payment-mandate transaction_data shape", () => {
   it("emits amount as a bare number with a separate currency (not an object)", async () => {
     const { buildProofPaymentMandate } = await import("../src/index.ts");

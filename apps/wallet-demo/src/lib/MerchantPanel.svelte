@@ -4,6 +4,17 @@
 
   const stateClass = (s: string) =>
     s === "SETTLED" ? "b-ok" : s === "FAILED" || s === "EXPIRED" ? "b-bad" : "b-warn";
+
+  // Proof returns some claims as nested objects (e.g. age_equal_or_over = {18: true}).
+  function fmtClaim(key: string, v: any): string {
+    if (v && typeof v === "object") {
+      const parts = Object.entries(v).map(([k, val]) =>
+        key.includes("age") ? `${k}+ ${val ? "✓" : "✗"}` : `${k}: ${val}`,
+      );
+      return parts.join(", ");
+    }
+    return String(v);
+  }
 </script>
 
 <div class="card">
@@ -39,6 +50,10 @@
     </div>
     <div class="kv">
       <span class="k">Issuer</span><span class="mono">{verification.issuer ?? "—"}</span>
+      {#if verification.issuerCert?.trustAnchor}
+        <span class="k">CA pinned</span>
+        <span><span class="badge b-ok">✓ trusted</span> <span class="mut" style="font-size:11.5px">{verification.issuerCert.trustAnchor}</span></span>
+      {/if}
       <span class="k">Disclosed</span>
       <span>
         {#each verification.disclosed ?? [] as c}<span class="chip-claim claim-disclosed" style="margin:2px">{c}</span>{/each}
@@ -49,9 +64,14 @@
       <div class="divider"></div>
       <div class="kv">
         {#each Object.entries(verification.subject) as [k, v]}
-          <span class="k">{k}</span><span><b>{String(v)}</b></span>
+          <span class="k">{k}</span><span><b>{fmtClaim(k, v)}</b></span>
         {/each}
       </div>
+    {/if}
+    {#if verification.paymentApproved}
+      <div class="divider"></div>
+      <div class="note">Holder cryptographically approved (in the KB-JWT):
+        <b>{verification.paymentApproved.prompt_summary}</b></div>
     {/if}
     {#if !verification.ok && verification.violations?.length}
       <div class="divider"></div>

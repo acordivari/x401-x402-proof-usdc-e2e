@@ -95,7 +95,7 @@ replayed against a different amount or merchant** (`txDataBound`).
 | Property | Check |
 |---|---|
 | Challenge authenticity / freshness | `verifier.verifyChallenge` — verifier id, resource, method, expiry, encryptor-sealed state |
-| Genuine credential | SD-JWT-VC issuer signature against a trusted issuer key (`iss`) |
+| Genuine credential | SD-JWT-VC issuer signature verified via the JWT `x5c` chain (ES256), with chain links checked and the chain **pinned to a trusted Proof CA** (SHA-256 fingerprint and/or root PEM). Local mode uses a resolved issuer key instead. |
 | Holder actually presented it | KB-JWT verified against the credential's `cnf` key (`holderBound`) |
 | Anti-replay | KB-JWT `nonce` == challenge value (`nonceBound`) |
 | Right info disclosed | DCQL `requiredClaims` all present |
@@ -132,11 +132,14 @@ interface, so tests exercise the same verification path as live.
 | Over-disclosure | DCQL selective disclosure; wallet reveals only requested claims. |
 | A different wallet rides the Intent | Merchant checks `payer == agentWallet` (existing HAM). |
 
-**Limits (sandbox):** live issuer-trust resolution is pin-or-well-known (formal
-Proof trust list / DIF CTE is an open item); the holder presents once per
-purchase (a reusable x401 token-exchange flow is supported by the SDK but not yet
-wired); transaction_data binding is enforced at the challenge layer rather than
-inside the KB-JWT `transaction_data_hashes` claim.
+**Limits (sandbox):** issuer trust pins the x5c chain to Proof's CA by SHA-256
+fingerprint — by default the **Fairfax issuing CA** (the leaf rotates; the root
+isn't shipped in the token). Pin the published **Proof Root CA** instead via
+`PROOF_TRUSTED_CA_FILE` for production. The holder presents once per purchase (a
+reusable x401 token-exchange flow is supported by the SDK but not yet wired).
+Note: live Proof actually binds the payment *inside* the holder-signed KB-JWT
+(`payment_mandate_v1`), which we surface as `paymentApproved`; our independent
+challenge-sealed digest binding is enforced in addition.
 
 ---
 
