@@ -15,12 +15,12 @@
  *
  * Run: `npm run demo`  (defaults to PROOF_MODE=local, FACILITATOR_MODE=mock).
  */
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import express, { type Express } from "express";
+import express, { type Express, type RequestHandler } from "express";
 import { dollarsToAtomic, loadEnv, type IntentMandate } from "@agentic-payments/shared";
 import { createMerchantApp } from "@agentic-payments/merchant";
 import { createLocalSigner, createPayingFetch } from "@agentic-payments/agent";
@@ -112,6 +112,67 @@ function resolveEncryptorKey(): string {
   return DEV_ENCRYPTOR_KEY;
 }
 
+// --- Web-session auth (F1): a shared access-token gate + per-client session
+//     isolation. "Exposed" is signalled by NODE_ENV=production or
+//     DEMO_REQUIRE_AUTH=true; in that posture we fail closed (refuse to boot
+//     unauthenticated / unsigned). Local dev stays open so the offline demo is
+//     unchanged. Cookie signing is hand-rolled with HMAC to avoid new deps. ---
+const SESSION_COOKIE = "ap_demo_sid";
+const exposed = (): boolean =>
+  process.env.NODE_ENV === "production" || process.env.DEMO_REQUIRE_AUTH === "true";
+
+/** The shared access token, or undefined when the gate is disabled (local dev). */
+function resolveAuthToken(): string | undefined {
+  const token = process.env.DEMO_AUTH_TOKEN;
+  if (token) return token;
+  if (exposed()) {
+    throw new Error(
+      "DEMO_AUTH_TOKEN must be set when NODE_ENV=production or DEMO_REQUIRE_AUTH=true — " +
+        "refusing to boot the orchestrator with no authentication.",
+    );
+  }
+  return undefined;
+}
+
+/** Secret that signs the session cookie. Random per-boot locally; required when exposed. */
+function resolveSessionSecret(): string {
+  const secret = process.env.DEMO_SESSION_SECRET;
+  if (secret) return secret;
+  if (exposed()) {
+    throw new Error("DEMO_SESSION_SECRET must be set when NODE_ENV=production or DEMO_REQUIRE_AUTH=true.");
+  }
+  return randomUUID(); // ephemeral: sessions simply don't survive a restart in local dev
+}
+
+function signSid(sid: string, secret: string): string {
+  return `${sid}.${createHmac("sha256", secret).update(sid).digest("base64url")}`;
+}
+function verifySid(signed: string, secret: string): string | undefined {
+  const dot = signed.lastIndexOf(".");
+  if (dot <= 0) return undefined;
+  const sid = signed.slice(0, dot);
+  const got = Buffer.from(signed.slice(dot + 1));
+  const want = Buffer.from(createHmac("sha256", secret).update(sid).digest("base64url"));
+  if (got.length !== want.length || !timingSafeEqual(got, want)) return undefined;
+  return sid;
+}
+function parseCookies(header?: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of (header ?? "").split(";")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const k = part.slice(0, i).trim();
+    if (k) out[k] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+/** Constant-time token comparison (avoids leaking the token via timing). */
+function tokenMatches(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 interface CatalogProduct {
   sku: string;
   name: string;
@@ -125,7 +186,8 @@ interface IntentScopeInput {
   allowedCategories: string[];
 }
 
-interface Session {
+/** An in-flight x401 authorization attempt (challenge + what it will authorize). */
+interface X401Attempt {
   challengeValue: string;
   payload: X401Payload;
   transactionData: string;
@@ -139,6 +201,19 @@ interface Session {
   scope: IntentScopeInput;
   requestedClaims: string[];
   ttlSeconds: number;
+}
+
+/** Per-client state, keyed by a signed session cookie — clients are isolated. */
+interface ClientSession {
+  flow: Flow;
+  /** in-flight authorization attempt (the former global `session`). */
+  x401?: X401Attempt;
+  /** the issued mandate this client may spend (the former global `intent`). */
+  intent?: IntentMandate;
+  lastVerification?: VerifiedAuthorization;
+  /** has this client passed the access-token gate? */
+  authed: boolean;
+  lastSeen: number;
 }
 
 export interface DemoApp {
@@ -174,6 +249,12 @@ export async function createDemoApp(): Promise<DemoApp> {
     key: resolveEncryptorKey(),
     purpose: "x401-agentic-payments",
   });
+
+  // Resolve the web-auth posture up front so fail-closed throws BEFORE any server
+  // boots (no leaked merchant listener on a refused start).
+  const authToken = resolveAuthToken();        // undefined => gate disabled (local)
+  const sessionSecret = resolveSessionSecret();
+  const authRequired = Boolean(authToken);
   const issuerKeys = await generateEs256Keys();
   const localIssuer = new LocalVcIssuer({ issuerId: ISSUER_ID, privateJwk: issuerKeys.privateJwk });
 
@@ -206,8 +287,6 @@ export async function createDemoApp(): Promise<DemoApp> {
       })
     : undefined;
 
-  // The selected workflow (mutable; switched via POST /api/flow).
-  let flow: Flow = DEFAULT_FLOW;
   // Which flows use the real Proof identity (vs the local self-issued substrate):
   // proof-hosted always; delegated when PROOF_MODE=live (otherwise it grants off
   // the local credential so the autonomous demo runs fully offline).
@@ -237,20 +316,54 @@ export async function createDemoApp(): Promise<DemoApp> {
   const findProduct = (sku: string) => catalog.find((p) => p.sku === sku);
   console.log(`[demo] merchant on ${merchantUrl} (mandate enforcement ON) · PROOF_MODE=${MODE}`);
 
-  // --- single-user sandbox session ---
-  let session: Session | undefined;
-  let intent: IntentMandate | undefined;
-  let lastVerification: VerifiedAuthorization | undefined;
+  // --- per-client session isolation + access gate (F1); posture resolved above ---
+  const sessions = new Map<string, ClientSession>();
+  const SESSION_TTL_MS = Number(process.env.DEMO_SESSION_TTL_MS ?? 3_600_000); // 1h idle
+  const secureCookie = exposed(); // add `Secure` only when behind TLS in prod
 
-  const intentSummary = () =>
-    intent && {
-      id: intent.id,
-      principal: intent.principal,
-      agentWallet: intent.agentWallet,
-      scope: intent.scope,
-      issuedAt: intent.issuedAt,
-      expiresAt: intent.expiresAt,
-      signed: Boolean(intent.proof),
+  const newSession = (): ClientSession => ({ flow: DEFAULT_FLOW, authed: !authRequired, lastSeen: Date.now() });
+
+  // Resolve (or mint) the caller's session from a signed cookie; clients never
+  // see each other's flow/x401/intent state.
+  const sessionMiddleware: RequestHandler = (req, res, next) => {
+    const raw = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    let sid = raw ? verifySid(raw, sessionSecret) : undefined;
+    let sess = sid ? sessions.get(sid) : undefined;
+    if (!sess || !sid) {
+      sid = randomUUID();
+      sess = newSession();
+      sessions.set(sid, sess);
+      const attrs = `HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secureCookie ? "; Secure" : ""}`;
+      res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${encodeURIComponent(signSid(sid, sessionSecret))}; ${attrs}`);
+    }
+    sess.lastSeen = Date.now();
+    res.locals.sess = sess;
+    next();
+  };
+
+  // The access gate: protect every /api/* except login + me (which report status).
+  const gate: RequestHandler = (req, res, next) => {
+    if (!req.path.startsWith("/api/") || req.path === "/api/login" || req.path === "/api/me") return next();
+    if ((res.locals.sess as ClientSession).authed) return next();
+    res.status(401).json({ error: "authentication required", authRequired: true });
+  };
+
+  // Evict idle sessions to bound memory (unref'd so it never holds the process open).
+  const sweep = setInterval(() => {
+    const cutoff = Date.now() - SESSION_TTL_MS;
+    for (const [id, s] of sessions) if (s.lastSeen < cutoff) sessions.delete(id);
+  }, Math.min(SESSION_TTL_MS, 600_000));
+  sweep.unref();
+
+  const intentSummary = (sess: ClientSession) =>
+    sess.intent && {
+      id: sess.intent.id,
+      principal: sess.intent.principal,
+      agentWallet: sess.intent.agentWallet,
+      scope: sess.intent.scope,
+      issuedAt: sess.intent.issuedAt,
+      expiresAt: sess.intent.expiresAt,
+      signed: Boolean(sess.intent.proof),
     };
 
   async function pollOrder(nonce: string): Promise<unknown> {
@@ -268,29 +381,50 @@ export async function createDemoApp(): Promise<DemoApp> {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   app.use(express.static(publicDir));
+  app.use(sessionMiddleware);
+  app.use(gate);
+
+  // --- access gate: exchange the shared token for an authenticated session ---
+  app.post("/api/login", (req, res) => {
+    const sess = res.locals.sess as ClientSession;
+    if (!authRequired) { sess.authed = true; return res.json({ authed: true }); }
+    const provided = String(req.body?.token ?? "");
+    if (authToken && tokenMatches(provided, authToken)) {
+      sess.authed = true;
+      return res.json({ authed: true });
+    }
+    res.status(401).json({ error: "invalid token", authed: false });
+  });
 
   app.get("/api/me", (_req, res) => {
+    const sess = res.locals.sess as ClientSession;
+    if (authRequired && !sess.authed) {
+      return res.json({ authRequired: true, authed: false });
+    }
     res.json({
+      authRequired,
+      authed: true,
       mode: MODE,
-      flow,
+      flow: sess.flow,
       flows: FLOWS,
       proofLiveReady,
-      identity: usesProof(flow) ? "proof" : "local",
-      delegated: flow === "delegated",
+      identity: usesProof(sess.flow) ? "proof" : "local",
+      delegated: sess.flow === "delegated",
       agentWallet: signer.address,
       merchant: MERCHANT,
       verifierId: VERIFIER_ID,
       claimUniverse: PROOF_ID_CLAIM_KEYS,
       budgetUsd: MANDATE_BUDGET_USD,
       mandateTtl: MANDATE_TTL,
-      sku: session?.sku,
-      intent: intentSummary(),
-      verification: lastVerification && summarizeVerification(lastVerification),
+      sku: sess.x401?.sku,
+      intent: intentSummary(sess),
+      verification: sess.lastVerification && summarizeVerification(sess.lastVerification),
     });
   });
 
   // --- switch the active workflow (resets any in-flight authorization) ---
   app.post("/api/flow", (req, res) => {
+    const sess = res.locals.sess as ClientSession;
     const next = req.body?.flow as Flow;
     if (!(FLOWS as readonly string[]).includes(next)) {
       return res.status(400).json({ error: `flow must be one of ${FLOWS.join(", ")}` });
@@ -298,11 +432,11 @@ export async function createDemoApp(): Promise<DemoApp> {
     if (usesProof(next) && !proofLiveReady) {
       return res.status(400).json({ error: `${next} needs PROOF_CLIENT_ID + PROOF_CLIENT_SECRET (and PROOF_MODE=live)` });
     }
-    flow = next;
-    session = undefined;
-    intent = undefined;
-    lastVerification = undefined;
-    res.json({ flow });
+    sess.flow = next;
+    sess.x401 = undefined;
+    sess.intent = undefined;
+    sess.lastVerification = undefined;
+    res.json({ flow: next });
   });
 
   app.get("/api/catalog", (_req, res) => res.json({ products: catalog, merchant: MERCHANT }));
@@ -312,7 +446,8 @@ export async function createDemoApp(): Promise<DemoApp> {
 
   // --- LOCAL mode: issue a self-issued credential to the in-browser wallet ---
   app.post("/api/wallet/issue", async (req, res) => {
-    if (usesProof(flow)) return res.status(400).json({ error: "wallet issuance is for the local-identity flows only" });
+    const sess = res.locals.sess as ClientSession;
+    if (usesProof(sess.flow)) return res.status(400).json({ error: "wallet issuance is for the local-identity flows only" });
     const { holderPublicJwk, claims } = req.body ?? {};
     if (!holderPublicJwk || !claims) return res.status(400).json({ error: "holderPublicJwk + claims required" });
     try {
@@ -326,12 +461,13 @@ export async function createDemoApp(): Promise<DemoApp> {
   // --- start authorization: build the payment (single buy) or budget grant
   //     (delegated), seal it into an x401 challenge, return PROOF-REQUIRED ---
   app.post("/api/authorize/start", async (req, res) => {
+    const sess = res.locals.sess as ClientSession;
     const { sku, requestedClaims, ttlSeconds, budgetUsd, categories } = req.body ?? {};
     const claims: string[] = Array.isArray(requestedClaims) && requestedClaims.length
       ? requestedClaims
       : ["given_name", "family_name", "email", "age_over_21"];
     const network = process.env.X402_NETWORK ?? "eip155:84532";
-    const grant = flow === "delegated";
+    const grant = sess.flow === "delegated";
 
     // Build the payment binding + intent scope: one product, or a standing budget.
     let resource: string;
@@ -394,9 +530,9 @@ export async function createDemoApp(): Promise<DemoApp> {
       scope: PROOF_BASIC_SCOPE, requestId: "proof-id-v1",
     });
 
-    intent = undefined;
-    lastVerification = undefined;
-    session = {
+    sess.intent = undefined;
+    sess.lastVerification = undefined;
+    sess.x401 = {
       challengeValue: challenge.value, payload, transactionData, resource,
       ...(grant ? {} : { sku }), grant, scope,
       requestedClaims: claims, ttlSeconds: ttl,
@@ -404,7 +540,7 @@ export async function createDemoApp(): Promise<DemoApp> {
 
     const common = {
       mode: MODE,
-      flow,
+      flow: sess.flow,
       grant,
       proofRequired: header,
       nonce: challenge.value,
@@ -416,7 +552,7 @@ export async function createDemoApp(): Promise<DemoApp> {
       scope,
     };
 
-    if (usesProof(flow)) {
+    if (usesProof(sess.flow)) {
       // Hosted Proof presentation via the official SDK: the human selectively
       // discloses identity AND signs the payment-mandate on Proof's screen. Our
       // own x401 payment binding (sealed above) is enforced regardless.
@@ -448,24 +584,26 @@ export async function createDemoApp(): Promise<DemoApp> {
 
   // --- complete authorization: verify the presentation, issue the Intent ---
   app.post("/api/authorize/complete", async (req, res) => {
-    if (!session) return res.status(400).json({ error: "no authorization in progress" });
+    const sess = res.locals.sess as ClientSession;
+    const attempt = sess.x401;
+    if (!attempt) return res.status(400).json({ error: "no authorization in progress" });
     const { vpToken } = req.body ?? {};
     if (!vpToken) return res.status(400).json({ error: "vpToken required" });
-    const { resource } = session;
-    const proofIdentity = usesProof(flow);
-    console.log(`[demo] /api/authorize/complete: vp_token received (len=${String(vpToken).length}) for ${session.grant ? "mandate-grant" : `sku=${session.sku}`} (flow=${flow})`);
+    const { resource } = attempt;
+    const proofIdentity = usesProof(sess.flow);
+    console.log(`[demo] /api/authorize/complete: vp_token received (len=${String(vpToken).length}) for ${attempt.grant ? "mandate-grant" : `sku=${attempt.sku}`} (flow=${sess.flow})`);
     try {
-      const { artifact } = packPresentation({ payload: session.payload, agentId: signer.address, vpToken });
+      const { artifact } = packPresentation({ payload: attempt.payload, agentId: signer.address, vpToken });
       const verification = await verifyAuthorization({
-        artifact, encryptor, vcVerifier: verifierFor(flow),
+        artifact, encryptor, vcVerifier: verifierFor(sess.flow),
         expectedVerifierId: VERIFIER_ID, expectedResource: resource, expectedMethod: "GET",
         // Local identity controls the exact claim names; live Proof decides which
         // claims its scope returns (e.g. age_equal_or_over vs age_over_21), so we
         // report what was disclosed rather than hard-requiring our names.
-        ...(proofIdentity ? {} : { requiredClaims: session.requestedClaims }),
-        transactionData: session.transactionData,
+        ...(proofIdentity ? {} : { requiredClaims: attempt.requestedClaims }),
+        transactionData: attempt.transactionData,
       });
-      lastVerification = verification;
+      sess.lastVerification = verification;
       console.log(`[demo] verification:`, JSON.stringify(summarizeVerification(verification)));
       if (!verification.result.ok) {
         return res.status(403).json({ error: "presentation rejected", verification: summarizeVerification(verification) });
@@ -473,14 +611,14 @@ export async function createDemoApp(): Promise<DemoApp> {
       const presentationDigest = await sha256Base64url(vpToken);
       // Single purchase -> a one-shot scope; delegated grant -> the broad,
       // long-lived budget the agent then spends autonomously.
-      intent = await service.issueIntentFromPresentation({
+      sess.intent = await service.issueIntentFromPresentation({
         authorization: verification,
         agentWallet: signer.address,
-        scope: session.scope,
-        ttlSeconds: session.ttlSeconds,
+        scope: attempt.scope,
+        ttlSeconds: attempt.ttlSeconds,
         presentationDigest,
       });
-      res.json({ verification: summarizeVerification(verification), intent: intentSummary() });
+      res.json({ verification: summarizeVerification(verification), intent: intentSummary(sess) });
     } catch (err) {
       res.status(400).json({ error: String(err) });
     }
@@ -494,13 +632,14 @@ export async function createDemoApp(): Promise<DemoApp> {
 
   // --- pay via x402 with the issued Intent (the existing payment rail) ---
   app.post("/api/buy", async (req, res) => {
-    const sku = req.body?.sku ?? session?.sku;
+    const sess = res.locals.sess as ClientSession;
+    const sku = req.body?.sku ?? sess.x401?.sku;
     if (!sku) return res.status(400).json({ error: "sku required" });
-    if (!intent) return res.status(401).json({ error: "authorize first (no signed Intent)" });
+    if (!sess.intent) return res.status(401).json({ error: "authorize first (no signed Intent)" });
     const payingFetch = await createPayingFetch(signer);
     const headers: Record<string, string> = {
       "Idempotency-Key": randomUUID(),
-      "X-Authorization-Mandate": Buffer.from(JSON.stringify(intent)).toString("base64"),
+      "X-Authorization-Mandate": Buffer.from(JSON.stringify(sess.intent)).toString("base64"),
     };
     try {
       const r = await payingFetch(`${merchantUrl}/buy/${sku}`, { headers });
@@ -518,9 +657,10 @@ export async function createDemoApp(): Promise<DemoApp> {
   //     signed Intent) IS the authorization; the merchant enforces the cumulative
   //     cap, so an over-budget buy is denied without anyone in the loop. ---
   app.post("/api/agent/run", async (req, res) => {
+    const sess = res.locals.sess as ClientSession;
     // Autonomous spending is a delegated-only capability — don't let a
     // single-purchase Intent from another flow drive the multi-buy loop.
-    if (flow !== "delegated") {
+    if (sess.flow !== "delegated") {
       return res.status(400).json({ error: "agent/run is only available in the delegated workflow" });
     }
     // Validate the requested skus up front (bound the loop; reject malformed input).
@@ -530,12 +670,12 @@ export async function createDemoApp(): Promise<DemoApp> {
          !rawSkus.every((s: unknown) => typeof s === "string"))) {
       return res.status(400).json({ error: "skus must be a non-empty array of up to 20 sku strings" });
     }
-    if (!intent) return res.status(401).json({ error: "no standing mandate — grant one first" });
+    if (!sess.intent) return res.status(401).json({ error: "no standing mandate — grant one first" });
     const requested: string[] = (rawSkus as string[] | undefined) ??
       ["allergy-relief-24", "vitamin-d3-2000", "ibuprofen-200", "toothpaste-mint"];
     const payingFetch = await createPayingFetch(signer);
-    const mandateHeader = Buffer.from(JSON.stringify(intent)).toString("base64");
-    const capAtomic = BigInt(intent.scope.maxAmount);
+    const mandateHeader = Buffer.from(JSON.stringify(sess.intent)).toString("base64");
+    const capAtomic = BigInt(sess.intent.scope.maxAmount);
     let spentAtomic = 0n;
     const purchases: unknown[] = [];
 
@@ -564,7 +704,7 @@ export async function createDemoApp(): Promise<DemoApp> {
     }
 
     res.json({
-      intent: intentSummary(),
+      intent: intentSummary(sess),
       capAtomic: capAtomic.toString(),
       spentAtomic: spentAtomic.toString(),
       remainingAtomic: (capAtomic - spentAtomic).toString(),
@@ -573,7 +713,8 @@ export async function createDemoApp(): Promise<DemoApp> {
   });
 
   app.post("/api/reset", (_req, res) => {
-    session = undefined; intent = undefined; lastVerification = undefined;
+    const sess = res.locals.sess as ClientSession;
+    sess.x401 = undefined; sess.intent = undefined; sess.lastVerification = undefined;
     res.json({ ok: true });
   });
 
@@ -583,7 +724,10 @@ export async function createDemoApp(): Promise<DemoApp> {
     agentWallet: signer.address,
     mode: MODE,
     defaultFlow: DEFAULT_FLOW,
-    close: () => new Promise<void>((resolve) => merchantServer.close(() => resolve())),
+    close: () => new Promise<void>((resolve) => {
+      clearInterval(sweep);
+      merchantServer.close(() => resolve());
+    }),
   };
 }
 

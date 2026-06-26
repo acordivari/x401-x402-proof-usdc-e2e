@@ -41,6 +41,10 @@
   // local self-issued browser wallet); delegated == the autonomous mandate flow.
   const proofIdentity = $derived(me.identity === "proof");
   const delegated = $derived(me.flow === "delegated");
+  // Auth gate (F1): when the orchestrator requires a token and we haven't passed
+  // it, show only the login card. Off in local dev (authRequired is falsy).
+  const needsLogin = $derived(me.authRequired === true && me.authed !== true);
+  let token = $state("");
   let budgetUsd = $state("5.00");
   let agentRun = $state<any>(undefined);
 
@@ -138,6 +142,22 @@
 
   function toggleClaim(c: string) {
     requested = requested.includes(c) ? requested.filter((x) => x !== c) : [...requested, c];
+  }
+
+  async function login() {
+    const r = await api("/api/login", { token });
+    if (r?.authed) {
+      token = "";
+      await refreshMe();
+      const cat = await api("/api/catalog");
+      catalog = cat.products ?? catalog;
+      if (!selectedSku) selectedSku = catalog[0]?.sku ?? "";
+      if (me.identity !== "proof") { keys = await ensureHolderKeys(); credential = loadCredential(); }
+      refreshOrders();
+      logLine("Unlocked.", "ok");
+    } else {
+      logLine("Invalid access token.", "bad");
+    }
   }
 
   async function provision() {
@@ -267,6 +287,22 @@
   </div>
 </header>
 
+{#if needsLogin}
+  <div class="wrap">
+    <div class="card" style="max-width:440px;margin:48px auto">
+      <h2>🔒 Access required</h2>
+      <p class="note">This orchestrator can mint credentials and spend mandates, so it's gated. Enter the access token to continue.</p>
+      <input
+        type="password"
+        bind:value={token}
+        placeholder="Access token"
+        onkeydown={(e) => e.key === 'Enter' && token.trim() && login()}
+        style="width:100%;margin:10px 0;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:9px"
+      />
+      <button onclick={login} disabled={!token.trim()}>Unlock</button>
+    </div>
+  </div>
+{:else}
 <div class="wrap">
   <div class="flowbar">
     <span class="mut" style="font-size:12px">Wallet workflow</span>
@@ -439,3 +475,4 @@
     </div>
   </div>
 </div>
+{/if}

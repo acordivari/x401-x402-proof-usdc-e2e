@@ -147,6 +147,22 @@ over-budget or out-of-scope buy is denied on its own, with nobody in the loop
 authorization model HAM was designed for — a headless agent can't complete a
 human-in-the-loop redirect mid-`/buy`, so the human pre-authorizes a scope once.
 
+### Orchestrator session model (who may spend a mandate)
+
+The demo orchestrator is **per-client isolated** and **gated**: each browser gets a
+signed, HttpOnly `SameSite=Lax` session cookie, and all per-client state (`flow`,
+the in-flight x401 attempt, the issued `intent`) lives in that session — so one
+client can never see or spend another's mandate. A shared `DEMO_AUTH_TOKEN` gates
+every state/spend endpoint (`POST /api/login`, timing-safe compare); it's **open in
+local dev** (no token) and **fails closed** when exposed (`NODE_ENV=production` or
+`DEMO_REQUIRE_AUTH=true` ⇒ refuse to boot without a token + `DEMO_SESSION_SECRET`),
+mirroring the `X401_ENCRYPTOR_KEY` guard. `SameSite=Lax` is the CSRF mitigation.
+Tests: `test/e2e-demo-server.test.ts` (isolation), `test/e2e-demo-auth.test.ts`
+(gate + fail-closed). Note: the agent wallet is shared infrastructure; isolation of
+*authority* holds because each session holds only its own `intent`. The in-memory
+session store is single-process (fine for the demo; a real deployment would back it
+with a shared store).
+
 ---
 
 ## 8. Threat model & current limits

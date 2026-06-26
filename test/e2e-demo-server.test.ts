@@ -56,21 +56,33 @@ afterAll(async () => {
   await closeDemo();
 });
 
-async function api(path: string, body?: unknown): Promise<{ status: number; body: any }> {
-  const res = await fetch(`${base}${path}`, {
-    method: body !== undefined ? "POST" : "GET",
-    ...(body !== undefined
-      ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }
-      : {}),
-  });
-  return { status: res.status, body: (await res.json().catch(() => ({}))) as any };
+type ApiClient = (path: string, body?: unknown) => Promise<{ status: number; body: any }>;
+
+/** A client with its own cookie jar — i.e. one isolated browser session. */
+function makeClient(): ApiClient {
+  let cookie = "";
+  return async (path, body) => {
+    const res = await fetch(`${base}${path}`, {
+      method: body !== undefined ? "POST" : "GET",
+      headers: {
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(cookie ? { cookie } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+    const setCookie = res.headers.get("set-cookie");
+    if (setCookie) cookie = setCookie.split(";")[0]; // retain name=value
+    return { status: res.status, body: (await res.json().catch(() => ({}))) as any };
+  };
 }
+
+const api = makeClient(); // the default client used by the flow tests
 
 /** Reproduce the browser's selective disclosure: issue a credential to a fresh
  * holder key via the server, then present it bound to the returned challenge. */
-async function presentFor(authStart: any): Promise<string> {
+async function presentFor(client: ApiClient, authStart: any): Promise<string> {
   const holder = await generateEs256Keys();
-  const issued = await api("/api/wallet/issue", { holderPublicJwk: holder.publicJwk, claims: PERSONA });
+  const issued = await client("/api/wallet/issue", { holderPublicJwk: holder.publicJwk, claims: PERSONA });
   expect(issued.status).toBe(200);
   const wallet = new LocalWallet(holder.privateJwk, holder.publicJwk);
   wallet.store({ id: PROOF_CREDENTIAL_ID, compact: issued.body.credential.compact, claimNames: [...PROOF_ID_CLAIM_KEYS] });
@@ -112,7 +124,7 @@ describe("wallet-demo orchestrator over HTTP", () => {
     expect(start.status).toBe(200);
     expect(start.body.grant).toBe(false);
 
-    const vpToken = await presentFor(start.body);
+    const vpToken = await presentFor(api, start.body);
     const complete = await api("/api/authorize/complete", { vpToken });
     expect(complete.status).toBe(200);
     expect(complete.body.verification.ok).toBe(true);
@@ -132,7 +144,7 @@ describe("wallet-demo orchestrator over HTTP", () => {
     expect(start.body.grant).toBe(true);
     expect(start.body.scope.maxAmount).toBe("4000000");
 
-    const vpToken = await presentFor(start.body);
+    const vpToken = await presentFor(api, start.body);
     const complete = await api("/api/authorize/complete", { vpToken });
     expect(complete.status).toBe(200);
     const intent = complete.body.intent;
@@ -189,5 +201,27 @@ describe("wallet-demo orchestrator over HTTP", () => {
     const r = await api("/api/agent/run", { skus: Array.from({ length: 21 }, () => "allergy-relief-24") });
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/skus/);
+  });
+
+  it("isolates sessions: one client cannot see or spend another's mandate (F1)", async () => {
+    const alice = makeClient();
+    const bob = makeClient(); // a separate cookie jar = a separate browser session
+
+    // Alice grants herself a delegated mandate.
+    await alice("/api/flow", { flow: "delegated" });
+    const start = await alice("/api/authorize/start", { budgetUsd: "4.00", requestedClaims: ["given_name", "age_over_21"] });
+    expect(start.status).toBe(200);
+    const vpToken = await presentFor(alice, start.body);
+    expect((await alice("/api/authorize/complete", { vpToken })).body.intent).toBeTruthy();
+
+    // Alice sees her own mandate.
+    expect((await alice("/api/me")).body.intent).toBeTruthy();
+
+    // Bob (different session) sees NO mandate and cannot run the agent against it.
+    const bobMe = await bob("/api/me");
+    expect(bobMe.body.intent).toBeFalsy();
+    const bobRun = await bob("/api/agent/run", {});
+    expect(bobRun.status).toBe(401);
+    expect(bobRun.body.error).toMatch(/no standing mandate/);
   });
 });
