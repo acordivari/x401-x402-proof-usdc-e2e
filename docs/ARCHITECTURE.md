@@ -12,7 +12,7 @@ We built a working, **testnet-only** sandbox where an AI agent pays a merchant
 for goods using the **x402** internet-payment protocol — and, crucially, where
 every payment is gated by a **cryptographically signed authorization from a
 verified human**. The demo scenario is an agent buying over-the-counter items
-from a simulated "CVS." The lasting deliverable is the authorization layer: a
+from a simulated "pharmacy merchant." The lasting deliverable is the authorization layer: a
 **Human Authorization Mandate (HAM)** that answers the question agentic commerce
 keeps dodging — *which human approved this agent to spend, and within what
 limits?*
@@ -48,8 +48,8 @@ This project closes that gap with a concrete, testable design.
 ### Explicit non-goals (for this sandbox)
 
 - No mainnet, no real funds, no real wallet (testnet + faucet only).
-- CVS is **simulated** — no real CVS API exists for x402. The storefront is
-  mocked; the payment + authorization rails are real.
+- The pharmacy merchant is **simulated** — no real pharmacy-merchant API exists
+  for x402. The storefront is mocked; the payment + authorization rails are real.
 - Not a production identity provider or custody solution.
 
 ---
@@ -80,7 +80,7 @@ packages/
   shared/     DRY core: wire schemas, money math, ORDER STATE MACHINE,
               HAM mandate model + scope validators, payment validators,
               the Signer interface, one clock
-  merchant/   "mock-CVS" seller: x402 paywall + RESILIENT FACILITATOR
+  merchant/   "mock pharmacy merchant" seller: x402 paywall + RESILIENT FACILITATOR
               (retry / idempotency / transaction-lock), ORDER LEDGER,
               MANDATE GATE (+ cumulative spend ledger)
   agent/      headless buyer: CDP Server Wallet or viem key -> x402 client
