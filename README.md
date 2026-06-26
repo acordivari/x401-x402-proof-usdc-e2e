@@ -29,6 +29,44 @@ Reproduce: `npm run setup:local` → fund the printed address → `npm run merch
 + `npm run agent allergy-relief-24`. _Next live milestone: the same settlement
 gated by a signed Human Authorization Mandate._
 
+## 🏁 Milestones — 2026-06-26 (identity authorization + hardening)
+
+A push to make the "which human authorized this agent" layer real and
+production-shaped. Every external boundary is a **swappable seam** (interface +
+in-process/offline default + a real impl, injected), so productionizing is an
+injection, not a rewrite. Suite grew to **153 tests / 24 files**.
+
+1. **Three wallet workflows + official Proof SDKs** (`WALLET_FLOW`) — *self-issued*
+   (browser-held SD-JWT-VC), *Proof-hosted* (real Proof wallet via
+   `@proof.com/proof-vc-common` + the `<proof-verify-id>` web component from
+   `@proof.com/proof-vc-web`), and *delegated*. The live verifier now pins Proof's
+   committed trust store via the SDK.
+2. **Delegated autonomous mandate** — the headline: a human presents **once** to
+   sign a durable, scoped budget; the agent then buys **many** times over x402 with
+   **no per-purchase approval** — the presigned identity is the standing
+   authorization (`/api/agent/run`).
+3. **Orchestrator security** — per-client **session isolation** + a shared
+   access-token **gate** (fail-closed when exposed); autonomous spend restricted to
+   the delegated flow; input validation; and a fail-closed `X401_ENCRYPTOR_KEY`
+   guard. The demo server became an importable factory (`createDemoApp`) for HTTP
+   end-to-end tests.
+4. **Mandate revocation** — the issuer can kill a standing mandate early; the
+   merchant then refuses any further spend against it. Two channels (`REVOCATION_MODE`):
+   in-process registry, or an **HTTP issuer status endpoint** (OCSP-style),
+   **fail-closed**.
+5. **Durable + global spend-cap ledger** (`LEDGER_MODE`) — the `SpendLedger` seam:
+   in-memory, **file-durable** (cap survives restart), or a central **HTTP service**
+   so the cap is enforced **globally across merchants**, fail-closed. Plus a
+   dependency-advisory fix (patched `ws` pinned via `overrides`).
+6. **Persistent session store** (`SESSION_STORE`) — sessions (and any mandate they
+   hold) survive a restart via a durable file store, behind a seam ready for an
+   external store.
+
+Decision recorded across the new channels: **fail-closed** — if the merchant can't
+confirm a mandate's status or cap headroom, the spend is denied (safety over
+availability). See [docs/ARCHITECTURE.md §8](docs/ARCHITECTURE.md) and
+[docs/X401-PROTOCOL.md](docs/X401-PROTOCOL.md).
+
 ## Docs
 
 - **[Architecture & Decisions](docs/ARCHITECTURE.md)** — the product-owner's

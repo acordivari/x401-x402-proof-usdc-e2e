@@ -62,6 +62,11 @@ import {
   type VerifiedAuthorization,
   type X401Payload,
 } from "@agentic-payments/credentials";
+import {
+  FileSessionStore,
+  InMemorySessionStore,
+  type SessionStore,
+} from "./session-store.ts";
 
 // Load the repo-root .env regardless of cwd (npm --workspace runs from the app dir).
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -100,6 +105,11 @@ const REVOCATION_MODE = process.env.REVOCATION_MODE === "http" ? "http" : "local
 // restart). Mirrors REVOCATION_MODE.
 const LEDGER_MODE = process.env.LEDGER_MODE === "http" ? "http" : "local";
 const LEDGER_FILE = process.env.LEDGER_FILE ?? path.join(os.tmpdir(), "agentic-payments-spend-ledger.json");
+
+// Orchestrator session store: "memory" (default; sessions drop on restart) or
+// "file" (durable — sessions survive a restart, given a stable DEMO_SESSION_SECRET).
+const SESSION_STORE = process.env.SESSION_STORE === "file" ? "file" : "memory";
+const SESSION_FILE = process.env.SESSION_FILE ?? path.join(os.tmpdir(), "agentic-payments-sessions.json");
 const REVOCATION_TIMEOUT_MS = process.env.REVOCATION_STATUS_TIMEOUT_MS
   ? Number(process.env.REVOCATION_STATUS_TIMEOUT_MS)
   : undefined;
@@ -383,28 +393,38 @@ export async function createDemoApp(): Promise<DemoApp> {
   console.log(`[demo] merchant on ${merchantUrl} (mandate enforcement ON) · PROOF_MODE=${MODE}`);
 
   // --- per-client session isolation + access gate (F1); posture resolved above ---
-  const sessions = new Map<string, ClientSession>();
+  // Session store (the swappable seam): in-memory (default) or durable file.
+  const sessionStore: SessionStore<ClientSession> =
+    SESSION_STORE === "file" ? new FileSessionStore<ClientSession>(SESSION_FILE) : new InMemorySessionStore<ClientSession>();
   const SESSION_TTL_MS = Number(process.env.DEMO_SESSION_TTL_MS ?? 3_600_000); // 1h idle
   const secureCookie = exposed(); // add `Secure` only when behind TLS in prod
 
   const newSession = (): ClientSession => ({ flow: DEFAULT_FLOW, authed: !authRequired, lastSeen: Date.now() });
 
   // Resolve (or mint) the caller's session from a signed cookie; clients never
-  // see each other's flow/x401/intent state.
+  // see each other's flow/x401/intent state. Mutations made by handlers are saved
+  // back on response finish (for non-GET requests — only POSTs mutate session
+  // state; GETs touch only lastSeen, flushed on the next POST or sweep).
   const sessionMiddleware: RequestHandler = (req, res, next) => {
-    const raw = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-    let sid = raw ? verifySid(raw, sessionSecret) : undefined;
-    let sess = sid ? sessions.get(sid) : undefined;
-    if (!sess || !sid) {
-      sid = randomUUID();
-      sess = newSession();
-      sessions.set(sid, sess);
-      const attrs = `HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secureCookie ? "; Secure" : ""}`;
-      res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${encodeURIComponent(signSid(sid, sessionSecret))}; ${attrs}`);
-    }
-    sess.lastSeen = Date.now();
-    res.locals.sess = sess;
-    next();
+    void (async () => {
+      const raw = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+      let sid = raw ? verifySid(raw, sessionSecret) : undefined;
+      let sess = sid ? await sessionStore.get(sid) : undefined;
+      if (!sess || !sid) {
+        sid = randomUUID();
+        sess = newSession();
+        await sessionStore.set(sid, sess);
+        const attrs = `HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secureCookie ? "; Secure" : ""}`;
+        res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${encodeURIComponent(signSid(sid, sessionSecret))}; ${attrs}`);
+      }
+      sess.lastSeen = Date.now();
+      res.locals.sess = sess;
+      if (req.method !== "GET") {
+        const finalSid = sid;
+        res.on("finish", () => void sessionStore.set(finalSid, sess!));
+      }
+      next();
+    })();
   };
 
   // The access gate: protect every /api/* except login + me (which report status).
@@ -415,10 +435,7 @@ export async function createDemoApp(): Promise<DemoApp> {
   };
 
   // Evict idle sessions to bound memory (unref'd so it never holds the process open).
-  const sweep = setInterval(() => {
-    const cutoff = Date.now() - SESSION_TTL_MS;
-    for (const [id, s] of sessions) if (s.lastSeen < cutoff) sessions.delete(id);
-  }, Math.min(SESSION_TTL_MS, 600_000));
+  const sweep = setInterval(() => void sessionStore.sweep(SESSION_TTL_MS), Math.min(SESSION_TTL_MS, 600_000));
   sweep.unref();
 
   const intentSummary = (sess: ClientSession) =>

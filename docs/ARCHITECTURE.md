@@ -219,9 +219,12 @@ these **before any real-funds or multi-instance deployment**:
   can't be reached, `reserve`/`total` deny; `commit`/`release` are fail-safe
   (over-count, never over-spend). *Still open:* a real DB behind the service +
   authn on the ledger endpoints.
-- **Orchestrator session store** — per-client sessions live in an in-memory `Map`
-  (single process). **Later:** a shared/persistent session store (+ `Secure`
-  cookies behind TLS).
+- **Orchestrator session store** — ✅ **built, selectable** via `SESSION_STORE`. The
+  `SessionStore` seam (`apps/wallet-demo/server/session-store.ts`) has
+  `InMemorySessionStore` (default) and `FileSessionStore` (**durable** — sessions,
+  and any standing mandate they hold, survive a restart given a stable
+  `DEMO_SESSION_SECRET`). *Still open:* a shared external store (Redis/DB) for
+  multi-instance sharing, and `Secure` cookies behind TLS.
 
 ### Dependency advisories
 
