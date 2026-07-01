@@ -1,0 +1,22 @@
+{
+  "_note": "Baseline for x401 spec/SDK drift. Regenerate deliberately with `npm run check:x401 -- --update` when you reconcile with a new spec/SDK version. See scripts/check-x401-spec.mjs and docs/X401-PROTOCOL.md.",
+  "checkedAt": "2026-07-01T19:44:33.392Z",
+  "app": {
+    "declaredRange": "^0.3.0",
+    "installedVersion": "0.3.0",
+    "specVersion": "0.2.0"
+  },
+  "upstream": {
+    "npmLatest": "0.3.0",
+    "x401NodeLatest": {
+      "kind": "release",
+      "ref": "v0.3.0",
+      "date": "2026-06-30T08:19:39Z"
+    },
+    "x401SpecLatest": {
+      "kind": "commit",
+      "ref": "f739b0e81c0e",
+      "date": "2026-07-01T18:09:43Z"
+    }
+  }
+}

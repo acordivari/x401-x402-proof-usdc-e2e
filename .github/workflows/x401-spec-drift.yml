@@ -1,0 +1,35 @@
+# Weekly x401 spec / SDK drift check (Tier 1).
+#
+# Polls npm + proof/x401-node + proof/x401 (all UNAUTHENTICATED public GETs — no
+# token, tied to no account, invisible to the repo owners) and compares against
+# the committed baseline `x401-spec.lock.json`. On drift the job FAILS, so GitHub
+# emails you (the owner of THIS repo) about your own failed scheduled run — no
+# external party is involved.
+#
+# It intentionally does NOT run on pull_request: upstream moving should not fail
+# unrelated PRs. Run it on demand from the Actions tab (workflow_dispatch) or let
+# the weekly schedule catch drift.
+name: x401 spec drift
+
+on:
+  schedule:
+    # Mondays 13:07 UTC (off the top of the hour to avoid the cron stampede).
+    - cron: "7 13 * * 1"
+  workflow_dispatch:
+
+# Least privilege: the script needs no repo write and no token at all.
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # The credentials workspace holds the pinned @proof.com/x401-node install
+      # the script reads for the current version + X401_VERSION const.
+      - run: npm ci
+      - run: npm run check:x401
