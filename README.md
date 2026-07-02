@@ -200,11 +200,11 @@ both **selectively discloses** identity (driven by a **DCQL** query) **and**
 The disclosed identity becomes the HAM principal; the merchant's x402 paywall and
 settlement are unchanged.
 
-- **New seam** (`packages/credentials`): a `VerifiableCredentialVerifier` with three
+- **New seam** (`packages/credentials`): a `VerifiableCredentialVerifier` with two
   implementations behind one interface — `localVcVerifier` (self-issued SD-JWT-VC,
-  offline/CI), `proofSdkVcVerifier` (live Proof via the official
-  `@proof.com/proof-vc-common` SDK), and `proofVcVerifier` (hand-rolled x5c fallback).
-  Mirrors the facilitator/identity seams; selected by `PROOF_MODE` + `proof.useSdk`.
+  offline/CI) and `proofSdkVcVerifier` (live Proof via the official
+  `@proof.com/proof-vc-common` SDK, pinned to Proof's committed trust store).
+  Mirrors the facilitator/identity seams; selected by `PROOF_MODE`.
 - **Three wallet workflows** (`WALLET_FLOW`): self-issued, Proof-hosted (SDK +
   `<proof-verify-id>` web component), and **delegated** — a presigned, durable,
   scoped mandate the agent spends autonomously with no per-purchase approval.

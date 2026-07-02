@@ -312,7 +312,6 @@ export async function createDemoApp(): Promise<DemoApp> {
     ? createVcVerifier({
         mode: "live",
         proof: {
-          useSdk: true,
           trustRoot: PROOF_TRUST_ROOT,
           sdkInit: {
             environment: PROOF_ENVIRONMENT as never,

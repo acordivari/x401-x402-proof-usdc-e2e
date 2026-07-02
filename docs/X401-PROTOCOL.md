@@ -101,7 +101,7 @@ replayed against a different amount or merchant** (`txDataBound`).
 | Property | Check |
 |---|---|
 | Challenge authenticity / freshness | `verifier.verifyChallenge` — verifier id, resource, method, expiry, encryptor-sealed state |
-| Genuine credential | Live: `@proof.com/proof-vc-common` `verifyVPToken` verifies the SD-JWT-VC issuer `x5c` chain (ES256) against Proof's committed trust store (`trustRoot`). (The hand-rolled `proofVcVerifier` — chain pinned to a CA fingerprint/root PEM — remains as an offline fallback.) Local mode uses a resolved issuer key instead. |
+| Genuine credential | Live: `@proof.com/proof-vc-common` `verifyVPToken` verifies the SD-JWT-VC issuer `x5c` chain (ES256) against Proof's committed trust store (`trustRoot`). Local mode uses a resolved issuer key instead. (A hand-rolled x5c fallback verifier existed pre-SDK; removed 2026-07 — see git history.) |
 | Holder actually presented it | KB-JWT verified against the credential's `cnf` key (`holderBound`) |
 | Anti-replay | KB-JWT `nonce` == challenge value (`nonceBound`) |
 | Right info disclosed | DCQL `requiredClaims` all present |
@@ -114,18 +114,18 @@ never runs.
 
 ## 7. Seam design (matches the repo doctrine)
 
-`VerifiableCredentialVerifier` is a swappable seam with **three** implementations
+`VerifiableCredentialVerifier` is a swappable seam with **two** implementations
 behind one interface (like `FacilitatorClient` and `IdentityVerifier`):
 
 | Verifier | Trust source | Used by |
 |---|---|---|
 | `localVcVerifier` | a pinned self-issuer key (`LocalVcIssuer`) | the offline / self-issued path, tests, CI |
 | `proofSdkVcVerifier` | `@proof.com/proof-vc-common` `verifyVPToken`, pinned to Proof's committed trust store via `trustRoot` | the live Proof-hosted path |
-| `proofVcVerifier` | hand-rolled x5c chain walk pinned to a Proof CA fingerprint | offline x5c fallback / trust-pin override |
 
-`createVcVerifier({ mode, proof })` selects one (`PROOF_MODE` + `proof.useSdk`).
-Mocks implement the real interface, so tests exercise the same verification path
-as live.
+`createVcVerifier({ mode, proof })` selects one (`PROOF_MODE`). Mocks implement
+the real interface, so tests exercise the same verification path as live. (A
+third, hand-rolled x5c chain-walk verifier predated the SDK adoption and was
+removed once every live caller went through the SDK.)
 
 ### The three wallet workflows
 
@@ -202,8 +202,7 @@ with a shared store).
 **Limits (sandbox):** the SDK verifier (`proofSdkVcVerifier`) pins to Proof's
 committed trust store via `trustRoot` (`development` for the Fairfax sandbox,
 `production` for prod) — so the open "pin the actual Root CA" item is resolved for
-the live path. The legacy `proofVcVerifier` still pins by SHA-256 fingerprint
-(default: Fairfax issuing CA) as an offline fallback. In the **self-issued** and
+the live path. In the **self-issued** and
 **proof-hosted** flows the holder presents once per purchase; the **delegated**
 flow is exactly the reusable-mandate model — one presentation authorizes many
 autonomous purchases within the signed scope/cap/expiry. Note: live Proof also
