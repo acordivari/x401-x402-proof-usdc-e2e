@@ -18,7 +18,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import express, { type Express, type RequestHandler } from "express";
@@ -67,116 +66,22 @@ import {
   InMemorySessionStore,
   type SessionStore,
 } from "./session-store.ts";
+import { FLOWS, resolveDemoConfig, type DemoConfig, type Flow } from "./config.ts";
+
+export { FLOWS, resolveDemoConfig, type DemoConfig, type Flow };
 
 // Load the repo-root .env regardless of cwd (npm --workspace runs from the app dir).
+// All configuration is read from env in `resolveDemoConfig()` (config.ts) at
+// createDemoApp() call time — nothing else reads process.env in this file.
 const here = path.dirname(fileURLToPath(import.meta.url));
 loadEnv(path.join(here, "..", "..", "..", ".env"));
 
-const MERCHANT = (process.env.MERCHANT_PAY_TO ?? "0xc0ffee0000000000000000000000000000000000").toLowerCase() as `0x${string}`;
-const MERCHANT_PORT = Number(process.env.MERCHANT_PORT ?? 4052); // 0 => ephemeral (tests)
-const DEMO_PORT = Number(process.env.DEMO_PORT ?? 4040);
-const VERIFIER_ID = process.env.X401_VERIFIER_ID ?? "https://sandbox.local/merchant";
-const ISSUER_ID = process.env.X401_LOCAL_ISSUER_ID ?? "https://issuer.sandbox.local";
-const MODE = (process.env.PROOF_MODE === "live" ? "live" : "local") as "live" | "local";
 const publicDir = path.join(here, "..", "dist");
 
-// --- the three selectable wallet workflows ---
-//   self-issued : browser-held local SD-JWT-VC, per-purchase consent (offline)
-//   proof-hosted: real Proof wallet via the proof-vc-common SDK, per-purchase
-//   delegated   : one upfront grant -> a durable, scoped mandate the agent then
-//                 spends autonomously (no per-purchase human approval)
-const FLOWS = ["self-issued", "proof-hosted", "delegated"] as const;
-type Flow = (typeof FLOWS)[number];
-const DEFAULT_FLOW: Flow = (FLOWS as readonly string[]).includes(process.env.WALLET_FLOW ?? "")
-  ? (process.env.WALLET_FLOW as Flow)
-  : "self-issued";
-
-// Delegated-mandate defaults: a long-lived budget the agent spends within.
-const MANDATE_TTL = Number(process.env.MANDATE_TTL ?? 86_400); // 24h
-const MANDATE_BUDGET_USD = process.env.MANDATE_BUDGET ?? "5.00";
-
-// Revocation channel: "local" = in-process registry shared with the merchant;
-// "http" = the merchant reads an issuer status endpoint (production shape,
-// fail-closed). Mirrors FACILITATOR_MODE / PROOF_MODE.
-const REVOCATION_MODE = process.env.REVOCATION_MODE === "http" ? "http" : "local";
-
-// Spend-cap ledger: "local" = per-process in-memory (default); "http" = a central
-// durable ledger service the merchant reserves/commits against (global + survives
-// restart). Mirrors REVOCATION_MODE.
-const LEDGER_MODE = process.env.LEDGER_MODE === "http" ? "http" : "local";
-const LEDGER_FILE = process.env.LEDGER_FILE ?? path.join(os.tmpdir(), "agentic-payments-spend-ledger.json");
-
-// Orchestrator session store: "memory" (default; sessions drop on restart) or
-// "file" (durable — sessions survive a restart, given a stable DEMO_SESSION_SECRET).
-const SESSION_STORE = process.env.SESSION_STORE === "file" ? "file" : "memory";
-const SESSION_FILE = process.env.SESSION_FILE ?? path.join(os.tmpdir(), "agentic-payments-sessions.json");
-const REVOCATION_TIMEOUT_MS = process.env.REVOCATION_STATUS_TIMEOUT_MS
-  ? Number(process.env.REVOCATION_STATUS_TIMEOUT_MS)
-  : undefined;
-
-// Live Proof SDK config (proof-vc-common): trust store + hosted-request settings.
-const PROOF_TRUST_ROOT = process.env.PROOF_TRUST_ROOT === "production" ? "production" : "development";
-const PROOF_ENVIRONMENT = process.env.PROOF_ENVIRONMENT ?? "sandbox"; // "sandbox" => api.fairfax.proof.com
-const PROOF_RESPONSE_MODE = process.env.PROOF_RESPONSE_MODE === "direct_post" ? "direct_post" : "fragment";
-
-// The built-in x401 encryptor key is for LOCAL/OFFLINE dev only. That key
-// authenticates the challenge state that seals the payment binding — if it ever
-// took its default value in a shared/live deployment, the binding would be
-// forgeable. So fail closed: refuse to boot with the default when PROOF_MODE=live
-// or NODE_ENV=production; only warn (and allow it) in the offline local demo.
-const DEV_ENCRYPTOR_KEY = "dev-only-x401-encryptor-key-change-me";
-function resolveEncryptorKey(): string {
-  const key = process.env.X401_ENCRYPTOR_KEY;
-  const usingDefault = !key || key === DEV_ENCRYPTOR_KEY;
-  if (!usingDefault) return key;
-  const prodLike = MODE === "live" || process.env.NODE_ENV === "production";
-  if (prodLike) {
-    throw new Error(
-      "X401_ENCRYPTOR_KEY must be set to a strong, non-default value when PROOF_MODE=live " +
-        "or NODE_ENV=production — it authenticates the x401 challenge state that seals the " +
-        "payment binding. Refusing to boot with the built-in dev key.",
-    );
-  }
-  if (process.env.NODE_ENV !== "test") {
-    console.warn(
-      "[demo] WARNING: using the built-in dev X401_ENCRYPTOR_KEY (local/offline only). " +
-        "Set X401_ENCRYPTOR_KEY for any shared or live deployment.",
-    );
-  }
-  return DEV_ENCRYPTOR_KEY;
-}
-
 // --- Web-session auth (F1): a shared access-token gate + per-client session
-//     isolation. "Exposed" is signalled by NODE_ENV=production or
-//     DEMO_REQUIRE_AUTH=true; in that posture we fail closed (refuse to boot
-//     unauthenticated / unsigned). Local dev stays open so the offline demo is
-//     unchanged. Cookie signing is hand-rolled with HMAC to avoid new deps. ---
+//     isolation. Posture (open vs fail-closed) is resolved in config.ts.
+//     Cookie signing is hand-rolled with HMAC to avoid new deps. ---
 const SESSION_COOKIE = "ap_demo_sid";
-const exposed = (): boolean =>
-  process.env.NODE_ENV === "production" || process.env.DEMO_REQUIRE_AUTH === "true";
-
-/** The shared access token, or undefined when the gate is disabled (local dev). */
-function resolveAuthToken(): string | undefined {
-  const token = process.env.DEMO_AUTH_TOKEN;
-  if (token) return token;
-  if (exposed()) {
-    throw new Error(
-      "DEMO_AUTH_TOKEN must be set when NODE_ENV=production or DEMO_REQUIRE_AUTH=true — " +
-        "refusing to boot the orchestrator with no authentication.",
-    );
-  }
-  return undefined;
-}
-
-/** Secret that signs the session cookie. Random per-boot locally; required when exposed. */
-function resolveSessionSecret(): string {
-  const secret = process.env.DEMO_SESSION_SECRET;
-  if (secret) return secret;
-  if (exposed()) {
-    throw new Error("DEMO_SESSION_SECRET must be set when NODE_ENV=production or DEMO_REQUIRE_AUTH=true.");
-  }
-  return randomUUID(); // ephemeral: sessions simply don't survive a restart in local dev
-}
 
 function signSid(sid: string, secret: string): string {
   return `${sid}.${createHmac("sha256", secret).update(sid).digest("base64url")}`;
@@ -268,7 +173,26 @@ export interface DemoApp {
  * the orchestrator itself — so tests can drive every endpoint over real HTTP on an
  * ephemeral port, and `main()` can listen it on DEMO_PORT for the live demo.
  */
-export async function createDemoApp(): Promise<DemoApp> {
+export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
+  // Resolve config first: the fail-closed checks (encryptor key / auth token /
+  // session secret) throw BEFORE any server boots (no leaked merchant listener
+  // on a refused start). Aliases keep the historical names used throughout.
+  const cfg = config ?? resolveDemoConfig();
+  const MERCHANT = cfg.merchantPayTo;
+  const MERCHANT_PORT = cfg.merchantPort;
+  const VERIFIER_ID = cfg.verifierId;
+  const ISSUER_ID = cfg.localIssuerId;
+  const MODE = cfg.mode;
+  const DEFAULT_FLOW = cfg.defaultFlow;
+  const MANDATE_TTL = cfg.mandateTtlSeconds;
+  const MANDATE_BUDGET_USD = cfg.mandateBudgetUsd;
+  const REVOCATION_MODE = cfg.revocationMode;
+  const REVOCATION_TIMEOUT_MS = cfg.revocationTimeoutMs;
+  const LEDGER_MODE = cfg.ledgerMode;
+  const LEDGER_FILE = cfg.ledgerFile;
+  const SESSION_STORE = cfg.sessionStore;
+  const SESSION_FILE = cfg.sessionFile;
+
   // --- shared trust: the AS signs Intents; the merchant verifies them ---
   const asKey = await createSigningKeyPair("auth-service-1");
   // One revocation registry shared (in-process) between the issuer that writes it
@@ -285,14 +209,12 @@ export async function createDemoApp(): Promise<DemoApp> {
 
   // --- x401 verifier-side state ---
   const encryptor = createEncryptor({
-    key: resolveEncryptorKey(),
+    key: cfg.encryptorKey,
     purpose: "x401-agentic-payments",
   });
 
-  // Resolve the web-auth posture up front so fail-closed throws BEFORE any server
-  // boots (no leaked merchant listener on a refused start).
-  const authToken = resolveAuthToken();        // undefined => gate disabled (local)
-  const sessionSecret = resolveSessionSecret();
+  const authToken = cfg.authToken; // undefined => gate disabled (local)
+  const sessionSecret = cfg.sessionSecret;
   const authRequired = Boolean(authToken);
   const issuerKeys = await generateEs256Keys();
   const localIssuer = new LocalVcIssuer({ issuerId: ISSUER_ID, privateJwk: issuerKeys.privateJwk });
@@ -304,21 +226,21 @@ export async function createDemoApp(): Promise<DemoApp> {
     mode: "local",
     local: { issuerId: ISSUER_ID, issuerPublicJwk: issuerKeys.publicJwk },
   });
-  const callbackUri = process.env.PROOF_REDIRECT_URI ?? `http://localhost:${DEMO_PORT}/proof/callback`;
-  const proofLiveReady = Boolean(process.env.PROOF_CLIENT_ID && process.env.PROOF_CLIENT_SECRET);
+  const callbackUri = cfg.proof.callbackUri;
+  const proofLiveReady = Boolean(cfg.proof.clientId && cfg.proof.clientSecret);
   // Built once when Proof client creds are present; configures the SDK (trust
   // store + hosted-request PAR) so both verify and authorize go through it.
   const sdkVerifier: VerifiableCredentialVerifier | undefined = proofLiveReady
     ? createVcVerifier({
         mode: "live",
         proof: {
-          trustRoot: PROOF_TRUST_ROOT,
+          trustRoot: cfg.proof.trustRoot,
           sdkInit: {
-            environment: PROOF_ENVIRONMENT as never,
-            clientId: process.env.PROOF_CLIENT_ID,
-            clientSecret: process.env.PROOF_CLIENT_SECRET,
+            environment: cfg.proof.environment as never,
+            clientId: cfg.proof.clientId,
+            clientSecret: cfg.proof.clientSecret,
             callbackUri,
-            responseMode: PROOF_RESPONSE_MODE,
+            responseMode: cfg.proof.responseMode,
             usePushedAuthorizationRequest: true,
           },
         },
@@ -395,8 +317,8 @@ export async function createDemoApp(): Promise<DemoApp> {
   // Session store (the swappable seam): in-memory (default) or durable file.
   const sessionStore: SessionStore<ClientSession> =
     SESSION_STORE === "file" ? new FileSessionStore<ClientSession>(SESSION_FILE) : new InMemorySessionStore<ClientSession>();
-  const SESSION_TTL_MS = Number(process.env.DEMO_SESSION_TTL_MS ?? 3_600_000); // 1h idle
-  const secureCookie = exposed(); // add `Secure` only when behind TLS in prod
+  const SESSION_TTL_MS = cfg.sessionTtlMs;
+  const secureCookie = cfg.exposed; // add `Secure` only when behind TLS in prod
 
   const newSession = (): ClientSession => ({ flow: DEFAULT_FLOW, authed: !authRequired, lastSeen: Date.now() });
 
@@ -560,7 +482,7 @@ export async function createDemoApp(): Promise<DemoApp> {
     const claims: string[] = Array.isArray(requestedClaims) && requestedClaims.length
       ? requestedClaims
       : ["given_name", "family_name", "email", "age_over_21"];
-    const network = process.env.X402_NETWORK ?? "eip155:84532";
+    const network = cfg.network;
     const grant = sess.flow === "delegated";
 
     // Build the payment binding + intent scope from one assembly, whether it's
@@ -663,18 +585,18 @@ export async function createDemoApp(): Promise<DemoApp> {
       try {
         const proofTd = proofTransactionData.paymentMandate({
           payment_instrument: {
-            type: process.env.PROOF_PAYMENT_INSTRUMENT_TYPE ?? "crypto",
-            id: process.env.PROOF_PAYMENT_INSTRUMENT_ID ?? `usdc:${network}:${signer.address}`,
+            type: cfg.proof.paymentInstrumentType,
+            id: cfg.proof.paymentInstrumentId ?? `usdc:${network}:${signer.address}`,
             description: "Agent USDC wallet (Base Sepolia)",
           },
           payee: { name: "Mock VeryGood-RX", website: "https://verygood-rx.example" },
           prompt_summary: promptSummary,
           amount: Number(amountUsd),
-          currency: process.env.PROOF_PAYMENT_CURRENCY ?? "USD",
+          currency: cfg.proof.paymentCurrency,
         });
         const authorizeUrl = await buildProofSdkAuthorizeUrl({
           nonce: challenge.value,
-          loginHint: process.env.PROOF_LOGIN_HINT ?? "",
+          loginHint: cfg.proof.loginHint,
           state: randomUUID(),
           transactionData: proofTd,
         });
@@ -835,8 +757,9 @@ export async function createDemoApp(): Promise<DemoApp> {
 }
 
 async function main() {
-  const demo = await createDemoApp();
-  demo.app.listen(DEMO_PORT, () => console.log(`[demo] open http://localhost:${DEMO_PORT}  (PROOF_MODE=${demo.mode})`));
+  const cfg = resolveDemoConfig();
+  const demo = await createDemoApp(cfg);
+  demo.app.listen(cfg.demoPort, () => console.log(`[demo] open http://localhost:${cfg.demoPort}  (PROOF_MODE=${demo.mode})`));
 }
 
 function summarizeVerification(v: VerifiedAuthorization) {
