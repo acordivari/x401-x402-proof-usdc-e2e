@@ -8,8 +8,8 @@ import { describe, expect, it } from "vitest";
 
 describe("x401 encryptor key fail-closed (server boot guard)", () => {
   it("refuses to boot in live mode with the default/empty key", async () => {
-    // Set BEFORE importing the module — its consts read process.env at import,
-    // and loadEnv() never overrides an already-set var.
+    // Set BEFORE createDemoApp() — config is resolved (resolveDemoConfig) at
+    // call time, and loadEnv() never overrides an already-set var.
     process.env.PROOF_MODE = "live";
     process.env.X401_ENCRYPTOR_KEY = ""; // would fall back to the dev default
     process.env.PROOF_CLIENT_ID = "";

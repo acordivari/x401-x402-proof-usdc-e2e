@@ -24,7 +24,11 @@ Existing seams (copy their shape):
 | Settlement | `FacilitatorClient` (`@x402/core`) | `HTTPFacilitatorClient` | `MockFacilitator` |
 | Order persistence | `OrderStore` (`merchant/src/order-store.ts`) | (SQLite, later) | `MemoryOrderStore` |
 | Identity (OIDC) | `IdentityVerifier` (`identity/src/oidc.ts`) | `auth0Verifier` | `localVerifier` |
-| Identity (VC/x401) | `VerifiableCredentialVerifier` (`credentials/src/verifier.ts`) | `proofVcVerifier` | `localVcVerifier` |
+| Identity (VC/x401) | `VerifiableCredentialVerifier` (`credentials/src/{verifier,proof-sdk}.ts`) | `proofSdkVcVerifier` (official Proof SDK) | `localVcVerifier` |
+| Spend-cap ledger | `SpendLedger` (`merchant/src/spend-ledger.ts`) | `httpSpendLedger` / `FileSpendLedger` | `InMemorySpendLedger` |
+| Revocation | `RevocationChecker` (`identity/src/revocation.ts`) | `httpRevocationChecker` (fail-closed) | `RevocationRegistry` |
+| Demo sessions | `SessionStore` (`apps/wallet-demo/server/session-store.ts`) | `FileSessionStore` | `InMemorySessionStore` |
+| Live-buyer balance read | `readBalance` option (`agent/src/live/buy.ts`) | on-chain viem `balanceOf` | injected stub (tests) |
 
 Rules:
 - Keep the interface **minimal** — only what callers actually need.

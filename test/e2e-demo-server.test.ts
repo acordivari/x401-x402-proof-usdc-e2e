@@ -21,8 +21,8 @@ import {
   PROOF_ID_CLAIM_KEYS,
 } from "@agentic-payments/credentials";
 
-// Configure the module BEFORE importing it: its top-level consts read process.env
-// at import time, and loadEnv() never overrides an already-set var. Force a fully
+// Configure env BEFORE createDemoApp(): config is resolved (resolveDemoConfig)
+// at call time, and loadEnv() never overrides an already-set var. Force a fully
 // offline, delegated-by-default, no-Proof-creds setup with an ephemeral merchant.
 process.env.PROOF_MODE = "local";
 process.env.WALLET_FLOW = "delegated";

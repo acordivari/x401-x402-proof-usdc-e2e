@@ -160,8 +160,9 @@ the x402 paywall verify + settle.
 ## 6. Cumulative-cap accounting (the spend ledger)
 
 `scope.maxAmount` caps **total** spend across many purchases under one Intent.
-Enforced with a reserve→commit/release ledger (`IntentSpendLedger`) keyed by
-EIP-3009 nonce, tied to the settlement lifecycle:
+Enforced with a reserve→commit/release ledger (the `SpendLedger` seam:
+in-memory, durable file, or central HTTP service) keyed by EIP-3009 nonce,
+tied to the settlement lifecycle:
 
 - **reserve** at authorization (gate), against `committed + reserved`,
 - **commit** on settle success (the reserved amount becomes committed),

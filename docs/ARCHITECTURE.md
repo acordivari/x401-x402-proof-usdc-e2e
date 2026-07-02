@@ -155,9 +155,10 @@ state"). Each is enforced in code **and** covered by tests.
 | Spend stays in budget | `Payment ⊆ Cart ⊆ Intent` (per-purchase cap) **plus** a cumulative **reserve→commit/release** ledger tied to settlement | `merchant/mandate-gate.ts` |
 | No leaked reservations | A reservation is released if the request doesn't end `200` | `merchant/mandate-gate.ts` (regression-tested) |
 
-**Testing:** 79 unit + integration tests (Vitest). Two offline end-to-end suites
-run the full agent→merchant→facilitator round trip with **no keys or funds** —
-one for the payment slice, one for mandate enforcement. A **high-effort,
+**Testing:** 170+ unit + integration tests (Vitest). The offline end-to-end
+suites run the full agent→merchant→facilitator round trip with **no keys or
+funds** — payment slice, mandate enforcement, x401/delegated/revocation/ledger
+flows, the orchestrator over HTTP, and the live buyer. A **high-effort,
 workflow-backed code review** (40 agents) was run after the authorization layer;
 all findings were applied, including two real bugs (the reservation leak and the
 catalog-price fix above).

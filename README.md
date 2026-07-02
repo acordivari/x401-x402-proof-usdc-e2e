@@ -220,7 +220,7 @@ identity source for HAM thus becomes swappable: **OIDC → Intent** *or*
 
 ```bash
 npm install
-npm test          # vitest — 99+ tests across shared, merchant, identity, credentials
+npm test          # vitest — 170+ tests across shared, merchant, identity, credentials, agent
 npm run typecheck # tsc --noEmit, strict
 ```
 

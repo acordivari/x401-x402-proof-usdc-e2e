@@ -1,23 +1,22 @@
 /**
- * Live Proof path built on the official `@proof.com/proof-vc-common` SDK, rather
- * than the hand-rolled equivalents in `proof-oid4vp.ts` / `proof-oauth.ts` /
- * `verifier.ts`. Two server-side capabilities:
+ * Live Proof path built on the official `@proof.com/proof-vc-common` SDK (the
+ * hand-rolled OAuth/OID4VP/x5c equivalents it replaced were removed 2026-07 —
+ * see git history). Two server-side capabilities:
  *
  *   - `proofSdkVcVerifier()` : a `VerifiableCredentialVerifier` that delegates to
  *     the SDK's `verifyVPToken`. The SDK decodes the DCQL `vp_token` envelope,
  *     verifies each SD-JWT-VC's issuer x5c chain against Proof's committed trust
- *     store (`trustRoot`), and verifies the holder KB-JWT against the nonce — so
- *     it both replaces our X.509 chain walk and resolves the open trust-pinning
- *     item (we pin Proof's actual Root CA via `trustRoot`, not the intermediate).
+ *     store (`trustRoot`), and verifies the holder KB-JWT against the nonce —
+ *     pinning Proof's actual Root CA via `trustRoot`, not an intermediate.
  *   - `buildProofSdkAuthorizeUrl()` : builds the hosted OID4VP authorize URL via
  *     the SDK's `getAuthorizationRequestURL` (with Pushed Authorization Requests,
  *     so the client secret never leaves the server and the payment-mandate URL
- *     stays small) — replacing the manual OAuth token mint + URL assembly.
+ *     stays small).
  *
  * Server-only (handles the client secret + Node trust store), so this lives in
- * the node barrel (`index.ts`) and NOT the browser barrel — same rule as
- * `proof-oauth.ts`. The x401 challenge/binding layer (`x401.ts`) composes around
- * this exactly as `@proof.com/x401-node` prescribes.
+ * the node barrel (`index.ts`) and NOT the browser barrel. The x401
+ * challenge/binding layer (`x401.ts`) composes around this exactly as
+ * `@proof.com/x401-node` prescribes.
  */
 import { X509Certificate } from "node:crypto";
 import {
