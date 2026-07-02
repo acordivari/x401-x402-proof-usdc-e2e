@@ -49,6 +49,33 @@ export const PaymentRequiredResponse = z.object({
 });
 export type PaymentRequiredResponse = z.infer<typeof PaymentRequiredResponse>;
 
+/**
+ * A payment option from ANY scheme/network — the shape external x402 resources
+ * return. The sandbox schema above pins scheme/network as literals because the
+ * sandbox only ever pays its own merchant; the live buyer instead parses with
+ * this relaxed shape and lets its spend guard (not the schema) decide which
+ * networks, assets, and amounts are acceptable.
+ */
+export const ExternalPaymentRequirements = PaymentRequirements.extend({
+  scheme: z.string(),
+  network: z.string(),
+});
+export type ExternalPaymentRequirements = z.infer<
+  typeof ExternalPaymentRequirements
+>;
+
+/** The 402 envelope from an external resource (any x402 version). */
+export const ExternalPaymentRequiredResponse = z.object({
+  x402Version: z.number().int().positive(),
+  error: z.string().optional(),
+  resource: z.unknown().optional(),
+  accepts: z.array(ExternalPaymentRequirements).min(1),
+  extensions: z.record(z.string(), z.unknown()).optional(),
+});
+export type ExternalPaymentRequiredResponse = z.infer<
+  typeof ExternalPaymentRequiredResponse
+>;
+
 /** EIP-3009 authorization the payer signs (the exact-scheme payload core). */
 export const ExactEvmAuthorization = z.object({
   from: EvmAddress,

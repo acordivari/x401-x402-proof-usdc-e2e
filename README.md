@@ -67,8 +67,21 @@ confirm a mandate's status or cap headroom, the spend is denied (safety over
 availability). See [docs/ARCHITECTURE.md §8](docs/ARCHITECTURE.md) and
 [docs/X401-PROTOCOL.md](docs/X401-PROTOCOL.md).
 
+## 🏁 Milestone — first payment to an EXTERNAL x402 merchant (2026-07-02)
+
+The new **live buyer** (`npm run live:discover` / `npm run live:buy`) found a
+real third-party endpoint via the x402 Bazaar and paid it: **0.002 test USDC**
+to `sandbox.node4all.com` on Base Sepolia
+([tx `0xc4e2907b…5e24f2e`](https://sepolia.basescan.org/tx/0xc4e2907be1fb4fdee1f19c98aaebd8238bd1610cf2c415ea69dd473cd5e24f2e)) —
+dry-run by default, testnet by default, per-call + durable-budget caps, and a
+payee-pinned in-path `PaymentPolicy` so terms can't shift between preflight and
+pay. Mainnet is one explicit `--mainnet --yes` away. See
+**[docs/LIVE-BUY.md](docs/LIVE-BUY.md)**.
+
 ## Docs
 
+- **[Live Buyer](docs/LIVE-BUY.md)** — discover + pay real x402 endpoints
+  with wallet-side guardrails (the path out of the sandbox).
 - **[Architecture & Decisions](docs/ARCHITECTURE.md)** — the product-owner's
   "what & why": problem, concepts, decision log, safety guarantees.
 - **[HAM Protocol Spec](docs/HAM-PROTOCOL.md)** — the Human Authorization Mandate

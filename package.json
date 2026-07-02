@@ -21,7 +21,9 @@
     "demo:web": "npm run dev --workspace=@agentic-payments/wallet-demo",
     "build:web": "npm run build --workspace=@agentic-payments/wallet-demo",
     "setup:live": "tsx packages/agent/src/setup-live.ts",
-    "setup:local": "tsx packages/agent/src/setup-local.ts"
+    "setup:local": "tsx packages/agent/src/setup-local.ts",
+    "live:discover": "tsx packages/agent/src/live/discover.ts",
+    "live:buy": "tsx packages/agent/src/live/buy.ts"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

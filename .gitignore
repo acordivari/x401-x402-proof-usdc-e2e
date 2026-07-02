@@ -9,3 +9,6 @@ dist/
 *.db
 .DS_Store
 coverage/
+
+# live-buyer durable spend journal (per-machine state, never commit)
+.live-spend.json
