@@ -24,6 +24,8 @@ export interface JournalEntry {
   status: "reserved" | "paid" | "failed";
   txHash?: string;
   note?: string;
+  /** The standing IntentMandate this spend was authorized by, when one is in force. */
+  mandateId?: string;
 }
 
 export class LiveSpendJournal {
@@ -72,6 +74,13 @@ export class LiveSpendJournal {
   remainingAtomic(capAtomic: bigint, network: string): bigint {
     const left = capAtomic - this.spentAtomic(network);
     return left > 0n ? left : 0n;
+  }
+
+  /** Cumulative spend charged against one standing mandate (never failed). */
+  spentForMandate(mandateId: string): bigint {
+    return this.items
+      .filter((e) => e.mandateId === mandateId && e.status !== "failed")
+      .reduce((acc, e) => acc + BigInt(e.amountAtomic), 0n);
   }
 
   reserve(

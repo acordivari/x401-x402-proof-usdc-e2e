@@ -22,6 +22,7 @@
     "setup:live": "tsx packages/agent/src/setup-live.ts",
     "setup:local": "tsx packages/agent/src/setup-local.ts",
     "live:discover": "tsx packages/agent/src/live/discover.ts",
+    "live:grant": "tsx packages/agent/src/live/grant.ts",
     "live:buy": "tsx packages/agent/src/live/buy.ts"
   },
   "devDependencies": {

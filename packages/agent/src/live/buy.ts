@@ -12,6 +12,7 @@
  *     same rules run again inside the x402 client as a PaymentPolicy pinned
  *     to the preflighted payee — so terms can't shift between look and pay.
  */
+import { existsSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { createPublicClient, erc20Abi, http } from "viem";
@@ -29,6 +30,7 @@ import { createLocalSigner, createSigner } from "../wallet.ts";
 import { createPayingFetch } from "../x402-client.ts";
 import { evaluateQuote, createSpendGuardPolicy, type SpendGuardConfig } from "./guard.ts";
 import { LiveSpendJournal } from "./journal.ts";
+import { loadMandateGrant, verifyMandateGrant, type LiveMandateFile } from "./mandate.ts";
 import { preflight } from "./quotes.ts";
 
 export interface LiveBuyOptions {
@@ -41,6 +43,12 @@ export interface LiveBuyOptions {
   journalPath: string;
   execute: boolean; // false = dry run
   rpcUrl?: string;
+  /**
+   * Path to a standing-mandate grant file (from live:grant). When set, the
+   * buyer refuses to spend unless the signed mandate verifies, binds this
+   * wallet, allowlists the payee, and has cumulative-cap headroom.
+   */
+  mandatePath?: string;
   /**
    * USDC balance reader — defaults to an on-chain read via the network's RPC.
    * Injectable (like every risky boundary here) so the flow runs offline in
@@ -59,6 +67,26 @@ export async function runLiveBuy(opts: LiveBuyOptions): Promise<number> {
 
   console.log(`[live-buy] target   ${opts.method} ${opts.url}`);
   console.log(`[live-buy] network  ${net.name} (${net.caip2})`);
+
+  // 0. Standing mandate (when configured): the signed human authorization that
+  //    bounds this run. Its payee allowlist feeds quote evaluation; its
+  //    cumulative cap is enforced against the journal below.
+  let mandate: LiveMandateFile["intent"] | undefined;
+  if (opts.mandatePath) {
+    const grant = loadMandateGrant(opts.mandatePath);
+    const check = await verifyMandateGrant({ grant, network: net.caip2 });
+    if (!check.ok) {
+      console.error(`[live-buy] standing mandate rejected: ${check.violations.join("; ")}`);
+      return 1;
+    }
+    mandate = grant.intent;
+    guard.payToAllowlist = mandate.scope.merchantAllowlist;
+    console.log(
+      `[live-buy] mandate  ${mandate.id.slice(0, 8)}… — ${mandate.principal.sub} authorized ` +
+        `${atomicToDollars(BigInt(mandate.scope.maxAmount))} USDC across ${mandate.scope.merchantAllowlist.length} payee(s), ` +
+        `expires ${new Date(mandate.expiresAt * 1000).toISOString()}`,
+    );
+  }
 
   // 1. Preflight: fetch the challenge without paying.
   const init: RequestInit = {
@@ -103,6 +131,19 @@ export async function runLiveBuy(opts: LiveBuyOptions): Promise<number> {
     );
     return 1;
   }
+  if (mandate) {
+    const mandateRemaining =
+      BigInt(mandate.scope.maxAmount) - journal.spentForMandate(mandate.id);
+    console.log(
+      `[live-buy] mandate  spent ${atomicToDollars(journal.spentForMandate(mandate.id))} / ${atomicToDollars(BigInt(mandate.scope.maxAmount))} USDC of the standing grant`,
+    );
+    if (priceAtomic > mandateRemaining) {
+      console.error(
+        `[live-buy] price ${atomicToDollars(priceAtomic)} USDC exceeds the mandate's remaining cap ${atomicToDollars(mandateRemaining < 0n ? 0n : mandateRemaining)} USDC — refusing`,
+      );
+      return 1;
+    }
+  }
 
   // 4. Wallet + on-chain balance check. In a dry run these are advisory —
   //    quote inspection shouldn't require a funded wallet.
@@ -130,6 +171,11 @@ export async function runLiveBuy(opts: LiveBuyOptions): Promise<number> {
           functionName: "balanceOf",
           args: [address],
         }));
+    if (mandate && signer.address !== mandate.agentWallet) {
+      throw new Error(
+        `the standing mandate binds agent ${mandate.agentWallet}, but this wallet is ${signer.address}`,
+      );
+    }
     balance = await readBalance(signer.address);
     console.log(
       `[live-buy] wallet   ${signer.label} ${signer.address} — ${atomicToDollars(balance)} USDC`,
@@ -169,6 +215,7 @@ export async function runLiveBuy(opts: LiveBuyOptions): Promise<number> {
     network: net.caip2,
     amountAtomic: chosen.amount,
     payTo: chosen.payTo,
+    ...(mandate ? { mandateId: mandate.id } : {}),
   });
   const payingFetch = await createPayingFetch(signer, {
     network: net.caip2,
@@ -236,16 +283,21 @@ if (isMain) {
       method: { type: "string", default: "GET" },
       body: { type: "string" },
       journal: { type: "string", default: ".live-spend.json" },
+      mandate: { type: "string" },
       yes: { type: "boolean", default: false },
     },
   });
   const url = positionals[0];
   if (!url) {
     console.error(
-      "usage: npm run live:buy -- <url> [--mainnet] [--max 0.05] [--budget 1.00] [--method POST] [--body '{...}'] [--yes]",
+      "usage: npm run live:buy -- <url> [--mainnet] [--max 0.05] [--budget 1.00] [--method POST] [--body '{...}'] [--mandate .live-mandate.json] [--yes]",
     );
     process.exit(2);
   }
+  // An explicit --mandate must exist (fail-closed); otherwise the default
+  // grant file is enforced automatically when present.
+  const mandatePath =
+    values.mandate ?? (existsSync(".live-mandate.json") ? ".live-mandate.json" : undefined);
   runLiveBuy({
     url,
     network: values.mainnet ? BASE_MAINNET : BASE_SEPOLIA,
@@ -256,6 +308,7 @@ if (isMain) {
     journalPath: values.journal,
     execute: values.yes,
     rpcUrl: process.env.BASE_RPC_URL,
+    ...(mandatePath ? { mandatePath } : {}),
   })
     .then((code) => process.exit(code))
     .catch((err) => {

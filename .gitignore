@@ -12,3 +12,4 @@ coverage/
 
 # live-buyer durable spend journal (per-machine state, never commit)
 .live-spend.json
+.live-mandate.json

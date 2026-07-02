@@ -39,3 +39,17 @@ export async function loadKeyPair(privateJwk: JWK, kid: string): Promise<Signing
 export function toJwks(...pairs: SigningKeyPair[]): { keys: JWK[] } {
   return { keys: pairs.map((p) => p.publicJwk) };
 }
+
+/**
+ * Build a verification-only trust anchor from a public JWK (e.g. one bundled
+ * alongside a durable mandate). The kid comes from the JWK unless overridden.
+ */
+export async function trustedKeyFromJwk(
+  publicJwk: JWK,
+  kid?: string,
+): Promise<{ kid: string; publicKey: KeyLike }> {
+  const resolvedKid = kid ?? publicJwk.kid;
+  if (!resolvedKid) throw new Error("public JWK has no kid and none was provided");
+  const publicKey = (await importJWK(publicJwk, "EdDSA")) as KeyLike;
+  return { kid: resolvedKid, publicKey };
+}

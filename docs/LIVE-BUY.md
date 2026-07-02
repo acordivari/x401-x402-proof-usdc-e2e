@@ -10,6 +10,14 @@ to `sandbox.node4all.com/v1/x402-test` on Base Sepolia
 ([tx `0xc4e2907b…5e24f2e`](https://sepolia.basescan.org/tx/0xc4e2907be1fb4fdee1f19c98aaebd8238bd1610cf2c415ea69dd473cd5e24f2e)),
 discovered via the Bazaar, gasless for the agent (facilitator submitted).
 
+**Update 2026-07-02 (later the same day):** the live buyer is now
+**mandate-bound**. `live:grant` runs the x401 presentation headlessly (the
+"human presents once" step), issues a signed `IntentMandate` (budget + payee
+allowlist + expiry, bound to the agent wallet), and `live:buy` enforces it
+wallet-side. First mandate-bound external settlement:
+[tx `0x68100a51…7b56d1`](https://sepolia.basescan.org/tx/0x68100a514fba6f325404de0b08cd433d0cd6afcfb64d927bc339f2cf9d7b56d1)
+under mandate `3c1315f5…` (0.10 USDC standing grant).
+
 ## Commands
 
 ```bash
@@ -20,10 +28,16 @@ npm run live:discover -- --mainnet --max 0.02 --query news
 # 2. Preflight (default = DRY RUN: decodes the 402, checks every guard, pays nothing)
 npm run live:buy -- https://sandbox.node4all.com/v1/x402-test
 
-# 3. Pay (testnet)
+# 3. Grant a standing mandate (the "human presents once" step): x401 local
+#    presentation -> signed IntentMandate for a payee + budget + expiry,
+#    bound to the agent wallet. Get the payee address from a dry run.
+npm run live:grant -- --merchant 0xd275612b... --budget 0.10 --ttl 3600
+
+# 4. Pay (testnet). If .live-mandate.json exists it is verified and ENFORCED:
+#    signature, wallet binding, payee allowlist, cumulative cap, expiry.
 npm run live:buy -- https://sandbox.node4all.com/v1/x402-test --yes
 
-# 4. Pay (REAL FUNDS — explicit opt-in, tight caps)
+# 5. Pay (REAL FUNDS — explicit opt-in, tight caps)
 npm run live:buy -- https://x402.ottoai.services/crypto-news \
   --mainnet --max 0.01 --budget 0.25 --yes
 ```
@@ -79,10 +93,32 @@ Plus, before anything signs:
 | Quote shape | new `ExternalPaymentRequirements` in `shared/schemas.ts` (relaxed scheme/network; the guard, not the schema, decides acceptability) |
 | Balance read | injected (`readBalance`) so the full flow runs offline in `test/e2e-live-buy.test.ts` against the mock-facilitator merchant |
 
-The mandate/HAM layer is intentionally **not** wired in yet: the guard is the
-minimal wallet-side authorization. The natural next step is issuing a real
-delegated `IntentMandate` whose scope feeds `SpendGuardConfig`, so the same
-signed human authorization that gates our merchant also bounds open-web spend.
+## The mandate binding (HAM on the open web)
+
+`live:grant` + `live:buy --mandate` close the loop the repo exists to prove:
+the **same signed human authorization** that gates our own merchant now bounds
+open-web spend — enforced by the wallet, since open-web merchants have never
+heard of HAM.
+
+- **Grant** (`live/grant.ts`): the human "presents once" — the identical x401
+  flow the wallet demo's delegated workflow uses (local SD-JWT-VC, selective
+  disclosure, KB-JWT over a challenge with the budget's `transaction_data`
+  sealed in). The Authorization Service verifies the presentation and signs
+  one durable `IntentMandate`: budget cap, payee allowlist, expiry, agent
+  wallet. The grant file bundles the AS public key as the trust anchor; the
+  AS private key is discarded (a grant can't be amended, only expire or be
+  deleted).
+- **Enforce** (`live/mandate.ts` + `buy.ts`): before anything signs, the buyer
+  verifies the mandate signature against the bundled anchor, the validity
+  window, the network, and that the mandate binds the wallet about to pay;
+  the mandate's payee allowlist feeds quote evaluation; and cumulative spend
+  per mandate id (tracked in the journal) must stay under the cap. All
+  fail-closed; covered by `test/e2e-live-mandate.test.ts`.
+- **Limits (prototype):** no revocation channel for live grants yet (the demo's
+  `RevocationChecker` is merchant-side; a wallet-side status check would slot
+  into `verifyMandateGrant`), and enforcement is advisory against a *malicious*
+  buyer binary — the trust story is "my agent can't overspend/mis-spend," not
+  "a compromised host can't."
 
 ## Ecosystem notes (verified 2026-07-02)
 
