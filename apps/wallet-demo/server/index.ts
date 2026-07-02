@@ -30,7 +30,7 @@ import {
   httpSpendLedger,
   type SpendLedger,
 } from "@agentic-payments/merchant";
-import { createLocalSigner, createPayingFetch } from "@agentic-payments/agent";
+import { createLocalSigner, createPayingFetch, pollOrder } from "@agentic-payments/agent";
 import {
   AuthorizationService,
   createSigningKeyPair,
@@ -448,16 +448,27 @@ export async function createDemoApp(): Promise<DemoApp> {
       signed: Boolean(sess.intent.proof),
     };
 
-  async function pollOrder(nonce: string): Promise<unknown> {
-    for (let i = 0; i < 40; i++) {
-      const r = await fetch(`${merchantUrl}/orders/by-nonce/${nonce}`);
-      if (r.ok) {
-        const order = (await r.json()) as { state?: string };
-        if (order.state === "SETTLED" || order.state === "FAILED") return order;
-      }
-      await new Promise((res) => setTimeout(res, 50));
-    }
-    return undefined;
+  // One paying fetch for the whole orchestrator (the signer is fixed at boot),
+  // and one buy path shared by the single-purchase and autonomous endpoints:
+  // idempotency key + mandate header -> x402 pay -> poll settlement.
+  const payingFetch = await createPayingFetch(signer);
+  async function executeBuy(
+    intent: object,
+    sku: string,
+  ): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; order?: { state?: string } }> {
+    const headers: Record<string, string> = {
+      "Idempotency-Key": randomUUID(),
+      "X-Authorization-Mandate": Buffer.from(JSON.stringify(intent)).toString("base64"),
+    };
+    const r = await payingFetch(`${merchantUrl}/buy/${sku}`, { headers });
+    const body = (await r.json().catch(() => ({}))) as Record<string, unknown> & {
+      receipt?: { paymentNonce?: string };
+    };
+    const nonce = body?.receipt?.paymentNonce;
+    const order = r.ok && nonce
+      ? ((await pollOrder(merchantUrl, nonce, { delayMs: 50 })) as { state?: string } | undefined)
+      : undefined;
+    return { ok: r.ok, status: r.status, body, ...(order ? { order } : {}) };
   }
 
   const app = express();
@@ -552,13 +563,29 @@ export async function createDemoApp(): Promise<DemoApp> {
     const network = process.env.X402_NETWORK ?? "eip155:84532";
     const grant = sess.flow === "delegated";
 
-    // Build the payment binding + intent scope: one product, or a standing budget.
-    let resource: string;
-    let scope: IntentScopeInput;
-    let ttl: number;
-    let td: ReturnType<typeof buildPaymentMandateTransactionData>;
-    let amountUsd: string;
-    let promptSummary: string;
+    // Build the payment binding + intent scope from one assembly, whether it's
+    // a single product or a standing budget grant — same wire shape, different
+    // amounts/categories/TTL.
+    const buildPlan = (p: {
+      amountUsd: string; sku: string; description: string; categories: string[];
+      resourcePath: string; ttl: number; promptSummary: string;
+    }) => ({
+      amountUsd: p.amountUsd,
+      promptSummary: p.promptSummary,
+      ttl: p.ttl,
+      resource: `${VERIFIER_ID}${p.resourcePath}`,
+      td: buildPaymentMandateTransactionData({
+        amount: dollarsToAtomic(p.amountUsd).toString(), currency: "USDC", merchant: MERCHANT,
+        network, sku: p.sku, description: p.description,
+      }),
+      scope: {
+        maxAmount: dollarsToAtomic(p.amountUsd).toString(),
+        merchantAllowlist: [MERCHANT],
+        allowedCategories: p.categories,
+      } as IntentScopeInput,
+    });
+
+    let plan: ReturnType<typeof buildPlan>;
     if (grant) {
       // Validate the budget: a positive, finite USDC amount (avoids a hung
       // request from dollarsToAtomic throwing on garbage). Normalize to cents.
@@ -580,28 +607,22 @@ export async function createDemoApp(): Promise<DemoApp> {
       } else {
         return res.status(400).json({ error: "categories must be an array of strings" });
       }
-      amountUsd = budget;
-      promptSummary = `Standing mandate: authorize this agent to spend up to $${budget} at Mock VeryGood-RX across ${cats.join(", ")}.`;
-      td = buildPaymentMandateTransactionData({
-        amount: dollarsToAtomic(budget).toString(), currency: "USDC", merchant: MERCHANT,
-        network, sku: "mandate-grant", description: promptSummary,
+      const promptSummary = `Standing mandate: authorize this agent to spend up to $${budget} at Mock VeryGood-RX across ${cats.join(", ")}.`;
+      plan = buildPlan({
+        amountUsd: budget, sku: "mandate-grant", description: promptSummary,
+        categories: cats, resourcePath: "/mandate/grant", ttl: MANDATE_TTL, promptSummary,
       });
-      resource = `${VERIFIER_ID}/mandate/grant`;
-      ttl = MANDATE_TTL;
-      scope = { maxAmount: dollarsToAtomic(budget).toString(), merchantAllowlist: [MERCHANT], allowedCategories: cats };
     } else {
       const product = findProduct(sku);
       if (!product) return res.status(400).json({ error: "unknown sku" });
-      amountUsd = product.priceUsd;
-      promptSummary = `Authorize Mock VeryGood-RX to charge $${product.priceUsd} for ${product.name}.`;
-      td = buildPaymentMandateTransactionData({
-        amount: dollarsToAtomic(product.priceUsd).toString(), currency: "USDC", merchant: MERCHANT,
-        network, sku: product.sku, description: product.name,
+      plan = buildPlan({
+        amountUsd: product.priceUsd, sku: product.sku, description: product.name,
+        categories: [product.category], resourcePath: `/buy/${product.sku}`,
+        ttl: Number(ttlSeconds ?? 600),
+        promptSummary: `Authorize Mock VeryGood-RX to charge $${product.priceUsd} for ${product.name}.`,
       });
-      resource = `${VERIFIER_ID}/buy/${product.sku}`;
-      ttl = Number(ttlSeconds ?? 600);
-      scope = { maxAmount: dollarsToAtomic(product.priceUsd).toString(), merchantAllowlist: [MERCHANT], allowedCategories: [product.category] };
     }
+    const { amountUsd, promptSummary, td, resource, ttl, scope } = plan;
     const transactionData = encodeTransactionData(td);
 
     const challenge = await createIdentityChallenge({
@@ -719,17 +740,9 @@ export async function createDemoApp(): Promise<DemoApp> {
     const sku = req.body?.sku ?? sess.x401?.sku;
     if (!sku) return res.status(400).json({ error: "sku required" });
     if (!sess.intent) return res.status(401).json({ error: "authorize first (no signed Intent)" });
-    const payingFetch = await createPayingFetch(signer);
-    const headers: Record<string, string> = {
-      "Idempotency-Key": randomUUID(),
-      "X-Authorization-Mandate": Buffer.from(JSON.stringify(sess.intent)).toString("base64"),
-    };
     try {
-      const r = await payingFetch(`${merchantUrl}/buy/${sku}`, { headers });
-      const body = (await r.json().catch(() => ({}))) as { receipt?: { paymentNonce?: string } };
-      const nonce = body?.receipt?.paymentNonce;
-      const settled = r.ok && nonce ? await pollOrder(nonce) : undefined;
-      res.json({ ok: r.ok, status: r.status, body, settled });
+      const r = await executeBuy(sess.intent, sku);
+      res.json({ ok: r.ok, status: r.status, body: r.body, settled: r.order });
     } catch (err) {
       res.json({ ok: false, status: 0, body: { error: String(err) } });
     }
@@ -756,8 +769,6 @@ export async function createDemoApp(): Promise<DemoApp> {
     if (!sess.intent) return res.status(401).json({ error: "no standing mandate — grant one first" });
     const requested: string[] = (rawSkus as string[] | undefined) ??
       ["allergy-relief-24", "vitamin-d3-2000", "ibuprofen-200", "toothpaste-mint"];
-    const payingFetch = await createPayingFetch(signer);
-    const mandateHeader = Buffer.from(JSON.stringify(sess.intent)).toString("base64");
     const capAtomic = BigInt(sess.intent.scope.maxAmount);
     let spentAtomic = 0n;
     const purchases: unknown[] = [];
@@ -765,16 +776,10 @@ export async function createDemoApp(): Promise<DemoApp> {
     for (const sku of requested) {
       const product = findProduct(sku);
       if (!product) { purchases.push({ sku, ok: false, status: 400, reason: "unknown sku" }); continue; }
-      const headers: Record<string, string> = {
-        "Idempotency-Key": randomUUID(),
-        "X-Authorization-Mandate": mandateHeader,
-      };
       try {
-        const r = await payingFetch(`${merchantUrl}/buy/${sku}`, { headers });
-        const body = (await r.json().catch(() => ({}))) as { receipt?: { paymentNonce?: string }; error?: string; violations?: string[] };
-        const nonce = body?.receipt?.paymentNonce;
-        const order = r.ok && nonce ? (await pollOrder(nonce)) as { state?: string } | undefined : undefined;
-        const settled = order?.state === "SETTLED";
+        const r = await executeBuy(sess.intent, sku);
+        const body = r.body as { error?: string; violations?: string[] };
+        const settled = r.order?.state === "SETTLED";
         if (settled) spentAtomic += dollarsToAtomic(product.priceUsd);
         purchases.push({
           sku, name: product.name, priceUsd: product.priceUsd, category: product.category,

@@ -17,6 +17,7 @@ import {
 } from "@agentic-payments/shared";
 import { createSigner } from "./wallet.ts";
 import { createPayingFetch } from "./x402-client.ts";
+import { pollOrder } from "./poll-order.ts";
 
 export interface PurchaseOptions {
   merchantUrl: string;
@@ -110,24 +111,6 @@ export async function runPurchase(opts: PurchaseOptions): Promise<PurchaseResult
     agentAddress: signer.address,
     idempotencyKey,
   };
-}
-
-/** Poll the merchant until the order settles (or a few attempts elapse). */
-async function pollOrder(
-  merchantUrl: string,
-  nonce: string,
-  attempts = 40, // generous: real on-chain settlement can take several seconds
-  delayMs = 500,
-): Promise<unknown> {
-  for (let i = 0; i < attempts; i++) {
-    const r = await fetch(`${merchantUrl}/orders/by-nonce/${nonce}`);
-    if (r.ok) {
-      const order = (await r.json()) as { state?: string };
-      if (order.state === "SETTLED" || order.state === "FAILED") return order;
-    }
-    await new Promise((res) => setTimeout(res, delayMs));
-  }
-  return undefined;
 }
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
