@@ -17,6 +17,6 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["packages/*/src", "apps/console/src", "apps/wallet-demo/server"],
+  "include": ["packages/*/src", "apps/wallet-demo/server"],
   "exclude": ["**/node_modules", "**/dist", "apps/wallet-demo/src"]
 }

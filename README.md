@@ -155,21 +155,12 @@ packages/
               #   transaction_data payment binding, VerifiableCredentialVerifier
               #   (local | proof), and @proof.com/x401-node wire wrappers
 apps/
-  console/    # original one-command demo: buyer + merchant consoles (OIDC + HAM)
   wallet-demo/# Vite + Svelte x401 wallet demo (VC presentation -> HAM -> x402)
 ```
 
-## Demo console
-
-```bash
-npm run console   # then open http://localhost:4040
-```
-
-Boots the mock-CVS merchant in-process with mandate enforcement, the local OIDC
-issuer, and the headless agent. In the browser: sign in (OIDC) → authorize the
-agent by signing an Intent (cap + categories + expiry) → shop. In-scope buys
-settle; out-of-scope buys are refused with the reason. The merchant panel shows
-live orders with their state-machine status and settlement tx.
+(The original no-build OIDC demo console, `apps/console`, was retired in favor
+of the wallet demo — same flow plus x401 identity, session isolation, and the
+auth gate. It lives in git history.)
 
 ### Safety guarantees (validated by tests)
 

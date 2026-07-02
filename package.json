@@ -15,7 +15,6 @@
     "check:x401": "node scripts/check-x401-spec.mjs",
     "merchant": "tsx packages/merchant/src/server.ts",
     "agent": "tsx packages/agent/src/buyer.ts",
-    "console": "tsx apps/console/src/server.ts",
     "demo": "npm run build:web && npm run demo:server",
     "demo:server": "npm run server --workspace=@agentic-payments/wallet-demo",
     "demo:web": "npm run dev --workspace=@agentic-payments/wallet-demo",
