@@ -65,9 +65,6 @@ export class InMemorySpendLedger implements SpendLedger {
   }
 }
 
-/** Back-compat alias — the old name for the in-memory ledger. */
-export { InMemorySpendLedger as IntentSpendLedger };
-
 /**
  * Durable ledger: committed spend is persisted to a JSON file (and reloaded on
  * construct), so the cap survives a restart. Reservations stay in-memory — an

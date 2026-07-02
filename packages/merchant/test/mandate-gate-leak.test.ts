@@ -17,7 +17,7 @@ import {
   type IntentMandate,
   type SigningKeyPair,
 } from "@agentic-payments/identity";
-import { createMandateGate, IntentSpendLedger } from "../src/mandate-gate.ts";
+import { createMandateGate, InMemorySpendLedger } from "../src/mandate-gate.ts";
 
 const MERCHANT = "0x1111111111111111111111111111111111111111" as const;
 const AGENT = "0x2222222222222222222222222222222222222222" as const;
@@ -81,7 +81,7 @@ function fakeRes() {
 
 describe("mandate gate reservation lifecycle", () => {
   it("reserves on authorize, then releases when the response is not 200", async () => {
-    const ledger = new IntentSpendLedger();
+    const ledger = new InMemorySpendLedger();
     const gate = createMandateGate({
       verifier,
       merchant: MERCHANT,
@@ -104,7 +104,7 @@ describe("mandate gate reservation lifecycle", () => {
   });
 
   it("keeps the reservation when the response is 200 (settle hooks own it)", async () => {
-    const ledger = new IntentSpendLedger();
+    const ledger = new InMemorySpendLedger();
     const gate = createMandateGate({
       verifier,
       merchant: MERCHANT,
@@ -125,7 +125,7 @@ describe("mandate gate reservation lifecycle", () => {
 });
 
 describe("mandate gate rejects out-of-scope paid requests", () => {
-  const makeGate = (ledger: IntentSpendLedger) =>
+  const makeGate = (ledger: InMemorySpendLedger) =>
     createMandateGate({
       verifier,
       merchant: MERCHANT,
@@ -135,7 +135,7 @@ describe("mandate gate rejects out-of-scope paid requests", () => {
     });
 
   it("rejects a payer that is not the authorized agent wallet (403)", async () => {
-    const ledger = new IntentSpendLedger();
+    const ledger = new InMemorySpendLedger();
     const gate = makeGate(ledger);
     const res = fakeRes();
     const next = vi.fn();
@@ -150,7 +150,7 @@ describe("mandate gate rejects out-of-scope paid requests", () => {
   });
 
   it("rejects underpayment vs the catalog price (403)", async () => {
-    const ledger = new IntentSpendLedger();
+    const ledger = new InMemorySpendLedger();
     const gate = makeGate(ledger);
     const res = fakeRes();
     const next = vi.fn();

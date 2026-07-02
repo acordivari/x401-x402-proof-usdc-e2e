@@ -31,9 +31,8 @@ import { findProduct, productPriceAtomic } from "./catalog.ts";
 import { decodePaymentAuthorization } from "./x402-headers.ts";
 import type { SpendLedger } from "./spend-ledger.ts";
 
-// The spend-cap ledger seam (in-memory / file / http) lives in `spend-ledger.ts`;
-// re-exported here for back-compat with the historical `IntentSpendLedger` name.
-export { InMemorySpendLedger, IntentSpendLedger, type SpendLedger } from "./spend-ledger.ts";
+// The spend-cap ledger seam (in-memory / file / http) lives in `spend-ledger.ts`.
+export { InMemorySpendLedger, type SpendLedger } from "./spend-ledger.ts";
 
 const MANDATE_HEADER = "x-authorization-mandate";
 

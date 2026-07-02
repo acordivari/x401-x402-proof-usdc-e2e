@@ -11,8 +11,6 @@ import { PROOF_CREDENTIAL_ID } from "./proof-credential.ts";
 
 export const PAYMENT_MANDATE_TX_TYPE =
   "urn:proof:params:vc:transaction-data:payment-mandate:v1" as const;
-export const SESSION_DATA_TX_TYPE =
-  "urn:proof:params:vc:transaction-data:session-data" as const;
 
 /** The common OID4VP transaction_data envelope (any type). */
 export interface ProofTransactionData {
@@ -48,64 +46,12 @@ export function buildPaymentMandateTransactionData(
   return { type: PAYMENT_MANDATE_TX_TYPE, credential_ids: [PROOF_CREDENTIAL_ID], payload };
 }
 
-/**
- * Proof's `payment-mandate:v1` transaction_data, per the Proof docs
- * (transaction-data-templates#payment-mandate). The End-User approves this on
- * Proof's hosted flow. NOTE: `amount` is a bare number and `currency` is a
- * separate top-level string (an `amount` object is rejected/500s).
- */
-export interface ProofPaymentMandateInput {
-  amount: number; // e.g. 1.50
-  currency: string; // e.g. "USD"
-  payeeName: string;
-  payeeWebsite?: string;
-  promptSummary: string;
-  instrument: { id: string; type: string; description?: string };
-}
-export function buildProofPaymentMandate(input: ProofPaymentMandateInput): ProofTransactionData {
-  return {
-    type: PAYMENT_MANDATE_TX_TYPE,
-    credential_ids: [PROOF_CREDENTIAL_ID],
-    payload: {
-      payment_instrument: input.instrument,
-      payee: { name: input.payeeName, ...(input.payeeWebsite ? { website: input.payeeWebsite } : {}) },
-      prompt_summary: input.promptSummary,
-      amount: input.amount,
-      currency: input.currency,
-    },
-  };
-}
-
-/** Proof `session-data` transaction_data (the documented, sandbox-ready type). */
-export function buildSessionTransactionData(payload: Record<string, unknown>): ProofTransactionData {
-  return { type: SESSION_DATA_TX_TYPE, credential_ids: [PROOF_CREDENTIAL_ID], payload };
-}
-
 /** Encode transaction_data for the wire (base64url JSON), per the Proof API. */
 export function encodeTransactionData(td: ProofTransactionData): string {
   return encodeJsonB64url(td);
 }
 
-/** Decode a base64url-encoded transaction_data blob. */
-export function decodeTransactionData(encoded: string): ProofTransactionData {
-  const json = new TextDecoder().decode(
-    Uint8Array.from(atobUrl(encoded), (c) => c.charCodeAt(0)),
-  );
-  return JSON.parse(json) as ProofTransactionData;
-}
-
 /** sha-256 digest (base64url) of the *encoded* transaction_data string. */
 export function transactionDataDigest(encoded: string): Promise<string> {
   return sha256Base64url(encoded);
-}
-
-/** base64url → binary string (browser/Node-safe, no Buffer dependency). */
-function atobUrl(b64url: string): string {
-  const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/").padEnd(
-    Math.ceil(b64url.length / 4) * 4,
-    "=",
-  );
-  return typeof atob === "function"
-    ? atob(b64)
-    : Buffer.from(b64, "base64").toString("binary");
 }

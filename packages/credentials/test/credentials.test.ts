@@ -226,24 +226,3 @@ describe("verifyAuthorization (x401 challenge + VC + payment binding)", () => {
     expect(v.result.ok).toBe(false);
   });
 });
-
-describe("Proof payment-mandate transaction_data shape", () => {
-  it("emits amount as a bare number with a separate currency (not an object)", async () => {
-    const { buildProofPaymentMandate } = await import("../src/index.ts");
-    const td = buildProofPaymentMandate({
-      amount: 1.5, currency: "USD", payeeName: "Mock VeryGood-RX", payeeWebsite: "https://verygood-rx.example",
-      promptSummary: "Authorize Mock VeryGood-RX to charge $1.50.",
-      instrument: { type: "crypto", id: "usdc:eip155:84532:0xabc" },
-    });
-    expect(td.type).toBe("urn:proof:params:vc:transaction-data:payment-mandate:v1");
-    expect(td.credential_ids).toEqual(["proof_id_default"]);
-    const p = td.payload as any;
-    expect(typeof p.amount).toBe("number");
-    expect(p.amount).toBe(1.5);
-    expect(p.currency).toBe("USD");
-    expect(p.amount.value).toBeUndefined(); // amount must NOT be an object
-    expect(p.payment_instrument).toEqual({ type: "crypto", id: "usdc:eip155:84532:0xabc" });
-    expect(p.payee).toEqual({ name: "Mock VeryGood-RX", website: "https://verygood-rx.example" });
-    expect(p.prompt_summary).toContain("$1.50");
-  });
-});
