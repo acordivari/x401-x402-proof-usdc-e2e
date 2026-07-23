@@ -44,6 +44,20 @@ export async function createCdpSigner(
   };
 }
 
+/**
+ * EIP-191 personal-sign with a PaymentSigner's account — the agent's half of
+ * the wallet-control proof. Both backing accounts (viem local
+ * key, CDP via `toAccount`) implement `signMessage`; a custom account that
+ * doesn't cannot prove control, so that's a hard error.
+ */
+export async function personalSign(signer: PaymentSigner, message: string): Promise<`0x${string}`> {
+  const account = await signer.getAccount();
+  if (!account.signMessage) {
+    throw new Error(`wallet ${signer.label} cannot personal-sign (no signMessage on its account)`);
+  }
+  return account.signMessage({ message });
+}
+
 export async function createSigner(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<PaymentSigner> {

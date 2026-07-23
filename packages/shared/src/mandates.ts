@@ -42,7 +42,7 @@ export type Principal = z.infer<typeof Principal>;
 
 /**
  * Wallet-native Agent Identifier (`did:pkh:eip155:<chainId>:<address>`) —
- * the optional identity profile proposed in x401 PR #17: it ties an Agent to
+ * an optional wallet-native identity profile: it ties an Agent to
  * an EVM account, with the chain id part of the identity.
  */
 export const AgentDid = z
@@ -66,6 +66,17 @@ export function parseAgentDid(
 }
 
 /**
+ * The message an agent personal-signs to prove it controls the wallet an
+ * Intent is about to bind (EOAs verify via EIP-191/secp256k1
+ * recovery, smart accounts via ERC-1271). Binding the same single-use
+ * challenge that seals the human's presentation ties wallet control to the
+ * exact request context being authorized.
+ */
+export function buildWalletControlMessage(input: { agentId: string; challenge: string }): string {
+  return `x401-wallet-control:v1\nagent: ${input.agentId}\nchallenge: ${input.challenge}`;
+}
+
+/**
  * Intent Mandate — signed by the human after OIDC login. Authorizes a specific
  * agent wallet to spend up to a cap, at allowlisted merchants, within a window.
  */
@@ -74,7 +85,7 @@ export const IntentMandate = z.object({
   id: z.string().uuid(),
   principal: Principal,
   agentWallet: EvmAddress, // the agent authorized to act for the principal
-  // Wallet-native did:pkh binding of the same agent (x401 PR #17). Optional for
+  // Wallet-native did:pkh binding of the same agent. Optional for
   // backward compatibility with already-signed mandates; when present, verifiers
   // MUST match the payer against it with the chain id as part of the identity.
   agentId: AgentDid.optional(),
@@ -174,7 +185,7 @@ export function validateCartAgainstIntent(
 }
 
 /**
- * Verify Payer ⊆ Intent — x401 PR #17's proof/payment binding, applied at the
+ * Verify Payer ⊆ Intent — the proof/payment binding, applied at the
  * payment protocol's *non-settling* verification step (i.e. BEFORE settlement).
  * The payer identity is derived from the signed payment authorization (the
  * EIP-3009 `from` plus the chain the payment settles on) and must match the

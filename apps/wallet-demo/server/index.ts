@@ -21,7 +21,13 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import express, { type Express, type RequestHandler } from "express";
-import { buildAgentDid, dollarsToAtomic, loadEnv, type IntentMandate } from "@agentic-payments/shared";
+import {
+  buildAgentDid,
+  buildWalletControlMessage,
+  dollarsToAtomic,
+  loadEnv,
+  type IntentMandate,
+} from "@agentic-payments/shared";
 import {
   createMerchantApp,
   createSpendLedgerRouter,
@@ -29,10 +35,11 @@ import {
   httpSpendLedger,
   type SpendLedger,
 } from "@agentic-payments/merchant";
-import { createLocalSigner, createPayingFetch, pollOrder } from "@agentic-payments/agent";
+import { createLocalSigner, createPayingFetch, personalSign, pollOrder } from "@agentic-payments/agent";
 import {
   AuthorizationService,
   createSigningKeyPair,
+  eip191AccountControl,
   httpRevocationChecker,
   MandateSigner,
   MandateVerifier,
@@ -204,6 +211,9 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
     new MandateSigner(asKey),
     undefined, // default clock
     revocations,
+    // Account control: issuance requires the agent wallet to have
+    // personal-signed for the binding (fail-closed once configured).
+    eip191AccountControl(),
   );
   const mandateVerifier = new MandateVerifier([{ kid: asKey.kid, publicKey: asKey.publicKey }]);
 
@@ -621,7 +631,7 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
     try {
       const { artifact } = packCredentialResult({
         payload: attempt.payload,
-        // Wallet-native Agent Identifier (did:pkh, x401 PR #17) — chain included.
+        // Wallet-native Agent Identifier (did:pkh) — chain included.
         agentId: buildAgentDid(cfg.network as `eip155:${number}`, signer.address),
         vpToken,
       });
@@ -642,6 +652,16 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
       const presentationDigest = await sha256Base64url(vpToken);
       // Single purchase -> a one-shot scope; delegated grant -> the broad,
       // long-lived budget the agent then spends autonomously.
+      // The agent wallet proves control of itself over the SAME single-use
+      // challenge the human's presentation satisfied.
+      const demoAgentDid = buildAgentDid(cfg.network as `eip155:${number}`, signer.address);
+      const walletProof = {
+        challenge: attempt.challengeValue,
+        signature: await personalSign(
+          signer,
+          buildWalletControlMessage({ agentId: demoAgentDid, challenge: attempt.challengeValue }),
+        ),
+      };
       sess.intent = await service.issueIntentFromPresentation({
         authorization: verification,
         agentWallet: signer.address,
@@ -651,6 +671,7 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
         // Same source as the artifact's did:pkh agent_id, so the two identities
         // can't diverge when X402_NETWORK is overridden.
         network: cfg.network as `eip155:${number}`,
+        walletProof,
       });
       res.json({ verification: summarizeVerification(verification), intent: intentSummary(sess) });
     } catch (err) {

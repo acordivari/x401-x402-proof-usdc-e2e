@@ -80,3 +80,13 @@ IntentMandate (`.live-mandate.json`) that `live:buy` verifies and enforces; spen
 
 Env template: `.env.example` documents every mode/secret, including the fail-closed
 `X401_ENCRYPTOR_KEY` and demo auth-gate (`DEMO_AUTH_TOKEN`/`DEMO_SESSION_SECRET`) semantics.
+
+## Upstream x401 reference policy
+
+This repository is public. Do **not** formally cite or link Proof's x401 repository — or any of
+its pull requests, issues, or discussion threads — in code comments, docs, tests, README content,
+or commit messages. Describe protocol concepts neutrally instead (e.g. "the wallet-native did:pkh
+identity profile", "the normative `payer_agent_mismatch` error") without attributing them to
+upstream threads. The one sanctioned touchpoint is `scripts/check-x401-spec.mjs`
+(`npm run check:x401`), whose repo identifiers exist only to poll for drift; its calls are
+deliberately unauthenticated/anonymous — never add a token to it.

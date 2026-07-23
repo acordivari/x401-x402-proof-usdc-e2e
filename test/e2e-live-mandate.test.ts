@@ -54,7 +54,8 @@ function options(overrides: Partial<LiveBuyOptions> = {}): LiveBuyOptions {
 
 beforeAll(async () => {
   const key = generatePrivateKey();
-  agentWallet = privateKeyToAccount(key).address.toLowerCase() as `0x${string}`;
+  const agentAccount = privateKeyToAccount(key);
+  agentWallet = agentAccount.address.toLowerCase() as `0x${string}`;
   process.env.WALLET_MODE = "local";
   process.env.AGENT_PRIVATE_KEY = key;
 
@@ -72,6 +73,7 @@ beforeAll(async () => {
     network: BASE_SEPOLIA,
     holder: "andrew@example.com",
     agentWallet,
+    signMessage: (message) => agentAccount.signMessage({ message }),
   });
 });
 
@@ -98,6 +100,7 @@ describe("mandate-bound live buyer (offline E2E)", () => {
   });
 
   it("refuses a payee that is not on the mandate allowlist", async () => {
+    const account = privateKeyToAccount(process.env.AGENT_PRIVATE_KEY as `0x${string}`);
     const other = await issueLiveGrant({
       merchantAllowlist: ["0x1111111111111111111111111111111111111111"],
       budgetUsdc: "2.00",
@@ -105,6 +108,7 @@ describe("mandate-bound live buyer (offline E2E)", () => {
       network: BASE_SEPOLIA,
       holder: "andrew@example.com",
       agentWallet,
+      signMessage: (message) => account.signMessage({ message }),
     });
     // The merchant's quote pays MERCHANT_PAY_TO, which this mandate does not allow.
     expect(await runLiveBuy(options({ mandatePath: grantPath(other) }))).toBe(1);
@@ -140,8 +144,8 @@ describe("mandate-bound live buyer (offline E2E)", () => {
   });
 
   it("refuses when the mandate binds a different agent wallet", async () => {
-    const otherWallet = privateKeyToAccount(generatePrivateKey())
-      .address.toLowerCase() as `0x${string}`;
+    const otherAccount = privateKeyToAccount(generatePrivateKey());
+    const otherWallet = otherAccount.address.toLowerCase() as `0x${string}`;
     const foreign = await issueLiveGrant({
       merchantAllowlist: [MERCHANT_PAY_TO],
       budgetUsdc: "2.00",
@@ -149,6 +153,7 @@ describe("mandate-bound live buyer (offline E2E)", () => {
       network: BASE_SEPOLIA,
       holder: "andrew@example.com",
       agentWallet: otherWallet,
+      signMessage: (message) => otherAccount.signMessage({ message }),
     });
     expect(await runLiveBuy(options({ mandatePath: grantPath(foreign) }))).toBe(1);
   });

@@ -75,7 +75,7 @@ export async function verifyMandateGrant(input: VerifyGrantInput): Promise<Valid
 }
 
 /**
- * Wallet-native agentId binding (did:pkh, x401 PR #17): when the mandate
+ * Wallet-native agentId binding (did:pkh): when the mandate
  * carries one, the chain id is part of the identity — the wallet AND network
  * this run pays with must both match it. Fail-closed on an unreadable binding.
  */

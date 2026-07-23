@@ -11,6 +11,7 @@ import { CompactSign, compactVerify, type KeyLike } from "jose";
 import {
   X402_NETWORK,
   buildAgentDid,
+  buildWalletControlMessage,
   cartItemsTotal,
   collect,
   nowSeconds,
@@ -30,6 +31,7 @@ import {
 import type { SigningKeyPair } from "./keys.ts";
 import type { IdentityVerifier } from "./oidc.ts";
 import type { RevocationRecord, RevocationRegistry } from "./revocation.ts";
+import type { AccountControlVerifier, WalletControlProof } from "./account-control.ts";
 
 type Signable = IntentMandate | CartMandate | PaymentMandate;
 
@@ -101,6 +103,8 @@ export interface IssueIntentRequest {
   ttlSeconds?: number;
   /** CAIP-2 chain the wallet-native agentId binds to. Default: the sandbox network. */
   network?: `eip155:${number}`;
+  /** Required when the service has an AccountControlVerifier configured. */
+  walletProof?: WalletControlProof;
 }
 
 /**
@@ -115,6 +119,12 @@ export class AuthorizationService {
     private readonly now: () => number = nowSeconds,
     /** Revocation authority. When set, issued Intents can be revoked before expiry. */
     private readonly revocations?: RevocationRegistry,
+    /**
+     * Account-control seam: when set, issuance REQUIRES a valid
+     * wallet-control proof — the agent must have signed for the wallet being
+     * bound (EIP-191 for EOAs, ERC-1271 for smart accounts). Fail-closed.
+     */
+    private readonly accountControl?: AccountControlVerifier,
   ) {}
 
   /**
@@ -129,7 +139,7 @@ export class AuthorizationService {
 
   async issueIntent(req: IssueIntentRequest): Promise<IntentMandate> {
     const principal = await this.identity.verify(req.idToken);
-    return this.signIntentFor(principal, req.agentWallet, req.scope, req.ttlSeconds, req.network);
+    return this.signIntentFor(principal, req);
   }
 
   /**
@@ -148,37 +158,75 @@ export class AuthorizationService {
       );
     }
     const principal = principalFromAuthorization(req.authorization, req.presentationDigest);
-    return this.signIntentFor(principal, req.agentWallet, req.scope, req.ttlSeconds, req.network);
+    // Wallet control must be proven against the SAME single-use challenge the
+    // human's presentation was bound to — one request context covers all three
+    // proofs (presentation, payment, agent wallet).
+    return this.signIntentFor(principal, req, req.authorization.challenge || undefined);
   }
 
   private async signIntentFor(
     principal: Principal,
-    agentWallet: `0x${string}`,
-    scope: IntentScope,
-    ttlSeconds?: number,
-    network?: `eip155:${number}`,
+    req: {
+      agentWallet: `0x${string}`;
+      scope: IntentScope;
+      ttlSeconds?: number;
+      network?: `eip155:${number}`;
+      walletProof?: WalletControlProof;
+    },
+    expectedChallenge?: string,
   ): Promise<IntentMandate> {
+    // Wallet-native did:pkh binding: same agent, but with the
+    // chain id folded into the identity the merchant matches the payer against.
+    const agentId = buildAgentDid(req.network ?? X402_NETWORK, req.agentWallet);
+    await this.requireWalletControl(agentId, req.agentWallet, req.walletProof, expectedChallenge);
+
     const issuedAt = this.now();
-    const ttl = ttlSeconds ?? 3600;
+    const ttl = req.ttlSeconds ?? 3600;
     const intent: IntentMandate = {
       type: "IntentMandate",
       id: randomUUID(),
       principal,
-      agentWallet,
-      // Wallet-native did:pkh binding (x401 PR #17): same agent, but with the
-      // chain id folded into the identity the merchant matches the payer against.
-      agentId: buildAgentDid(network ?? X402_NETWORK, agentWallet),
+      agentWallet: req.agentWallet,
+      agentId,
       scope: {
-        maxAmount: scope.maxAmount,
+        maxAmount: req.scope.maxAmount,
         currency: "USDC",
-        merchantAllowlist: scope.merchantAllowlist,
-        allowedCategories: scope.allowedCategories,
+        merchantAllowlist: req.scope.merchantAllowlist,
+        allowedCategories: req.scope.allowedCategories,
       },
       issuedAt,
       expiresAt: issuedAt + ttl,
       nonce: randomUUID(),
     };
     return this.signer.sign(intent);
+  }
+
+  /**
+   * Account control, enforced only when the seam is configured:
+   * the proof must exist, be bound to the expected challenge (when one is
+   * known), and its signature must prove control of the wallet being bound.
+   */
+  private async requireWalletControl(
+    agentId: string,
+    agentWallet: `0x${string}`,
+    proof: WalletControlProof | undefined,
+    expectedChallenge: string | undefined,
+  ): Promise<void> {
+    if (!this.accountControl) return;
+    if (!proof) {
+      throw new Error("cannot issue intent: wallet-control proof required (account control is configured)");
+    }
+    if (expectedChallenge !== undefined && proof.challenge !== expectedChallenge) {
+      throw new Error("cannot issue intent: wallet-control proof is not bound to this authorization's challenge");
+    }
+    const result = await this.accountControl.verifyControl({
+      address: agentWallet,
+      message: buildWalletControlMessage({ agentId, challenge: proof.challenge }),
+      signature: proof.signature,
+    });
+    if (!result.ok) {
+      throw new Error(`cannot issue intent: ${result.violations.join("; ")}`);
+    }
   }
 }
 
@@ -191,6 +239,11 @@ export interface IssueIntentFromPresentationRequest {
   presentationDigest?: string;
   /** CAIP-2 chain the wallet-native agentId binds to. Default: the sandbox network. */
   network?: `eip155:${number}`;
+  /**
+   * Required when the service has an AccountControlVerifier configured; must be
+   * bound to the same challenge as the presentation (`authorization.challenge`).
+   */
+  walletProof?: WalletControlProof;
 }
 
 /** Map a verified VC presentation to a HAM Principal. */

@@ -185,6 +185,12 @@ export interface VerifiedAuthorization {
   /** The verified credential proof (claims, holder/nonce binding). */
   proof?: PresentationProof;
   agentId?: string;
+  /**
+   * The challenge value the artifact carried (the OID4VP nonce; "" if absent).
+   * Downstream issuers bind further proofs — e.g. wallet control — to it, so
+   * one single-use request context covers presentation, payment, and agent.
+   */
+  challenge: string;
 }
 
 /** Read the `{ vp_token, challenge }` we carried in the Result Artifact. */
@@ -249,5 +255,6 @@ export async function verifyAuthorization(
     txDataBound,
     proof,
     ...(artifact.agent_id !== undefined ? { agentId: artifact.agent_id } : {}),
+    challenge: challengeValue,
   };
 }

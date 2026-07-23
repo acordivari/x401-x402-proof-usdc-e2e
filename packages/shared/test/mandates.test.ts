@@ -125,7 +125,7 @@ describe("validatePaymentAgainstCart (Payment ⊆ Cart)", () => {
   });
 });
 
-describe("did:pkh Agent Identifiers (x401 PR #17)", () => {
+describe("did:pkh Agent Identifiers", () => {
   it("builds and parses round-trip, normalizing the address to lowercase", () => {
     const did = buildAgentDid("eip155:84532", "0xAbCd000000000000000000000000000000000001");
     expect(did).toBe("did:pkh:eip155:84532:0xabcd000000000000000000000000000000000001");

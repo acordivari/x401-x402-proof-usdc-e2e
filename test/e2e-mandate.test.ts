@@ -168,7 +168,7 @@ describe("merchant enforces the Human Authorization Mandate", () => {
       categories: ["otc-medicine"],
     });
     // The rogue wallet presents a perfectly valid mandate — but the EIP-3009
-    // payer it signs with is not the agent the human bound (x401 PR #17).
+    // payer it signs with is not the agent the human bound.
     const { status, body } = await buy(rogue, "allergy-relief-24", intent, "payer-1");
     expect(status).toBe(403);
     expect(body.error).toBe("payer_agent_mismatch");

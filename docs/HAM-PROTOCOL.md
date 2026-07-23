@@ -59,7 +59,7 @@ wallet** and a **spending scope**.
     "emailVerified": true
   },
   "agentWallet": "0x…",          // the only wallet this Intent authorizes
-  // Wallet-native did:pkh form of the same binding (x401 PR #17). Optional for
+  // Wallet-native did:pkh form of the same binding. Optional for
   // pre-existing signed mandates; when present the CHAIN ID is part of the
   // identity a verifier must match the payer against.
   "agentId": "did:pkh:eip155:84532:0x…",
@@ -77,6 +77,16 @@ wallet** and a **spending scope**.
   }
 }
 ```
+
+**Issuance-time account control.** When the Authorization
+Service is configured with an `AccountControlVerifier`, it refuses to sign an
+Intent unless the agent proves it *controls* the wallet being bound: the agent
+personal-signs `buildWalletControlMessage(agentId, challenge)` — EIP-191 for
+EOAs (verified by pure secp256k1 recovery, offline), ERC-1271/ERC-6492 for
+smart accounts (on-chain, fail-closed on RPC failure). On the x401 path the
+proof must be bound to the **same single-use challenge** as the human's
+presentation, so one request context covers all three proofs: the human's
+selective disclosure, the payment digest, and the agent's wallet control.
 
 ### 3.2 Cart mandate (derived by the merchant from its catalog)
 
@@ -155,7 +165,7 @@ On each `/buy`, the gate (`mandate-gate.ts`) enforces, in order:
      derived from the signed EIP-3009 authorization (`from` + the chain it
      settles on) must match `agentWallet` — and, when the Intent carries a
      wallet-native `agentId` (did:pkh), the **chain id is part of the
-     identity**. A mismatch is refused *before settlement* with x401 PR #17's
+     identity**. A mismatch is refused *before settlement* with the
      normative `payer_agent_mismatch` error,
    - **Payment ⊆ Cart** (`validatePaymentAgainstCart`): `payTo == merchant` and
      `amount == cart.total` — i.e. the agent signed for **exactly the merchant's
@@ -194,6 +204,7 @@ no phantom spend, no double count.
 | Agent underpays to dodge the cap | Cart total = **catalog price**; `amount == total` enforced. |
 | A different wallet rides a stolen Intent | Payer ⊆ Intent: `payer == agentWallet`, plus the did:pkh `agentId` (chain-inclusive) ⇒ `payer_agent_mismatch`. |
 | Same wallet key replayed on another chain | The did:pkh `agentId` folds the chain id into the identity; a cross-chain payer mismatches. |
+| Mandate binds a wallet the agent doesn't control | Issuance-time wallet-control proof (EIP-191 / ERC-1271), challenge-bound, required whenever the seam is configured. |
 | Over-budget across many buys | Cumulative spend ledger. |
 | On-chain replay of a payment | EIP-3009 nonce is single-use on USDC. |
 | Reservation leak exhausting the cap | Released on non-200 finish (regression-tested). |

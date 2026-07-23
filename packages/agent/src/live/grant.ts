@@ -25,6 +25,7 @@ import {
   BASE_SEPOLIA,
   atomicToDollars,
   buildAgentDid,
+  buildWalletControlMessage,
   dollarsToAtomic,
   loadEnv,
   type IntentMandate,
@@ -54,8 +55,9 @@ import {
   AuthorizationService,
   MandateSigner,
   createSigningKeyPair,
+  eip191AccountControl,
 } from "@agentic-payments/identity";
-import { createLocalSigner, createSigner } from "../wallet.ts";
+import { createLocalSigner, createSigner, personalSign } from "../wallet.ts";
 import { LIVE_MANDATE_VERSION, type LiveMandateFile } from "./mandate.ts";
 
 const VERIFIER_ID = "https://live-buyer.local/verifier";
@@ -72,6 +74,13 @@ export interface LiveGrantOptions {
   holder: string;
   /** The agent wallet address the mandate binds to. */
   agentWallet: `0x${string}`;
+  /**
+   * Personal-sign with the agent wallet. When present, the grant carries a
+   * wallet-control proof over the same single-use challenge as the human's
+   * presentation, and the AS verifies it (EIP-191) before signing — the
+   * account-control step.
+   */
+  signMessage?: (message: string) => Promise<`0x${string}`>;
 }
 
 /**
@@ -130,8 +139,9 @@ export async function issueLiveGrant(opts: LiveGrantOptions): Promise<LiveMandat
     nonce: getRequestChallenge(detected.payload).value,
     audience: VERIFIER_ID,
   });
+  const agentDid = buildAgentDid(opts.network.caip2, opts.agentWallet);
   const { header: resultHeader } = packCredentialResult({
-    payload, agentId: buildAgentDid(opts.network.caip2, opts.agentWallet), vpToken: presented.vpToken,
+    payload, agentId: agentDid, vpToken: presented.vpToken,
   });
 
   // Verify exactly as a standalone verifier would: challenge + credential +
@@ -147,12 +157,26 @@ export async function issueLiveGrant(opts: LiveGrantOptions): Promise<LiveMandat
     transactionData,
   });
 
+  // The agent proves control of the wallet being bound by signing the same
+  // single-use challenge the human's presentation just satisfied.
+  const walletProof = opts.signMessage
+    ? {
+        challenge: challenge.value,
+        signature: await opts.signMessage(
+          buildWalletControlMessage({ agentId: agentDid, challenge: challenge.value }),
+        ),
+      }
+    : undefined;
+
   // Issue the ONE durable mandate. The AS key lives only for this call; its
   // public half ships in the grant file as the buyer's trust anchor.
   const asKey = await createSigningKeyPair(`live-grant-${randomUUID().slice(0, 8)}`);
   const service = new AuthorizationService(
     { verify: async () => { throw new Error("OIDC path disabled for live grants"); } } as never,
     new MandateSigner(asKey),
+    undefined,
+    undefined,
+    walletProof ? eip191AccountControl() : undefined,
   );
   const intent: IntentMandate = await service.issueIntentFromPresentation({
     authorization,
@@ -164,8 +188,9 @@ export async function issueLiveGrant(opts: LiveGrantOptions): Promise<LiveMandat
     },
     ttlSeconds: opts.ttlSeconds,
     // Bind the wallet-native agentId to the chain this grant pays on — the
-    // chain id is part of the identity (x401 PR #17).
+    // chain id is part of the identity.
     network: opts.network.caip2,
+    ...(walletProof ? { walletProof } : {}),
   });
 
   return {
@@ -217,6 +242,7 @@ if (isMain) {
       network: values.mainnet ? BASE_MAINNET : BASE_SEPOLIA,
       holder: values.holder,
       agentWallet: signer.address,
+      signMessage: (message) => personalSign(signer, message),
     });
     writeFileSync(values.out, JSON.stringify(grant, null, 2));
     const scope = grant.intent.scope;

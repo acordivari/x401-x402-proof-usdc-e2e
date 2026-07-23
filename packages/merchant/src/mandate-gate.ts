@@ -128,7 +128,7 @@ export function createMandateGate(opts: MandateGateOptions) {
     // authorization (`from` + the chain it settles on — the non-settling verify
     // step) must match the mandate's bound agent, chain id included when the
     // intent carries a wallet-native did:pkh agentId. A mismatch is refused
-    // BEFORE settlement with x401 PR #17's `payer_agent_mismatch` error. The
+    // BEFORE settlement with the normative `payer_agent_mismatch` error. The
     // signed amount is caught below by Payment ⊆ Cart (the cart total is the
     // catalog price, not the agent's figure).
     const payerScope = validatePayerAgainstIntent(

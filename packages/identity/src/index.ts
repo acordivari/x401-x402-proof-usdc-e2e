@@ -3,3 +3,4 @@ export * from "./keys.ts";
 export * from "./oidc.ts";
 export * from "./mandate.ts";
 export * from "./revocation.ts";
+export * from "./account-control.ts";
