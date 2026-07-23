@@ -160,6 +160,45 @@ describe("merchant enforces the Human Authorization Mandate", () => {
     expect(JSON.stringify(body.violations)).toMatch(/signature is invalid/);
   });
 
+  it("rejects a payer that is not the bound agent (payer_agent_mismatch, 403)", async () => {
+    const authorized = createLocalSigner();
+    const rogue = createLocalSigner();
+    const intent = await issueIntentFor(authorized.address, {
+      maxAmount: "5000000",
+      categories: ["otc-medicine"],
+    });
+    // The rogue wallet presents a perfectly valid mandate — but the EIP-3009
+    // payer it signs with is not the agent the human bound (x401 PR #17).
+    const { status, body } = await buy(rogue, "allergy-relief-24", intent, "payer-1");
+    expect(status).toBe(403);
+    expect(body.error).toBe("payer_agent_mismatch");
+    expect(JSON.stringify(body.violations)).toMatch(/payer_agent_mismatch/);
+  });
+
+  it("rejects the right wallet bound to a different chain (payer_agent_mismatch, 403)", async () => {
+    const signer = createLocalSigner();
+    const idToken = await issuer.mintIdToken({
+      sub: "auth0|buyer",
+      email: "buyer@example.com",
+      emailVerified: true,
+    });
+    // Same wallet address, but the did:pkh agentId pins Ethereum mainnet — the
+    // chain id is part of the identity, so a Base Sepolia payment must not match.
+    const intent = await service.issueIntent({
+      idToken,
+      agentWallet: signer.address,
+      scope: {
+        maxAmount: "5000000",
+        merchantAllowlist: [MERCHANT],
+        allowedCategories: ["otc-medicine"],
+      },
+      network: "eip155:1",
+    });
+    const { status, body } = await buy(signer, "allergy-relief-24", intent, "payer-chain-1");
+    expect(status).toBe(403);
+    expect(body.error).toBe("payer_agent_mismatch");
+  });
+
   it("enforces the cumulative cap across multiple purchases", async () => {
     const signer = createLocalSigner();
     const intent = await issueIntentFor(signer.address, {

@@ -5,7 +5,7 @@
  *                          trust anchor (offline; the test/CI + offline-demo
  *                          substrate)
  *   - proofSdkVcVerifier : (proof-sdk.ts) verifies a real Proof presentation
- *                          via the official @proof.com/proof-vc-common SDK,
+ *                          via the official @proof.com/proof-vc-server SDK,
  *                          pinned to Proof's committed trust store
  *
  * Both check the issuer signature, the holder key-binding (KB-JWT) against the

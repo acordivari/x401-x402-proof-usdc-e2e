@@ -21,7 +21,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import express, { type Express, type RequestHandler } from "express";
-import { dollarsToAtomic, loadEnv, type IntentMandate } from "@agentic-payments/shared";
+import { buildAgentDid, dollarsToAtomic, loadEnv, type IntentMandate } from "@agentic-payments/shared";
 import {
   createMerchantApp,
   createSpendLedgerRouter,
@@ -221,7 +221,7 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
 
   // --- VC verifiers (the swappable seam), one per identity substrate ---
   // local : self-issued SD-JWT-VC against our trust anchor (offline)
-  // sdk   : real Proof presentation via @proof.com/proof-vc-common (verifyVPToken)
+  // sdk   : real Proof presentation via @proof.com/proof-vc-server (verifyVPToken)
   const localVerifier = createVcVerifier({
     mode: "local",
     local: { issuerId: ISSUER_ID, issuerPublicJwk: issuerKeys.publicJwk },
@@ -619,7 +619,12 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
     const proofIdentity = usesProof(sess.flow);
     console.log(`[demo] /api/authorize/complete: vp_token received (len=${String(vpToken).length}) for ${attempt.grant ? "mandate-grant" : `sku=${attempt.sku}`} (flow=${sess.flow})`);
     try {
-      const { artifact } = packCredentialResult({ payload: attempt.payload, agentId: signer.address, vpToken });
+      const { artifact } = packCredentialResult({
+        payload: attempt.payload,
+        // Wallet-native Agent Identifier (did:pkh, x401 PR #17) — chain included.
+        agentId: buildAgentDid(cfg.network as `eip155:${number}`, signer.address),
+        vpToken,
+      });
       const verification = await verifyAuthorization({
         artifact, encryptor, vcVerifier: verifierFor(sess.flow),
         expectedVerifierId: VERIFIER_ID, expectedResource: resource, expectedMethod: "GET",
@@ -643,6 +648,9 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
         scope: attempt.scope,
         ttlSeconds: attempt.ttlSeconds,
         presentationDigest,
+        // Same source as the artifact's did:pkh agent_id, so the two identities
+        // can't diverge when X402_NETWORK is overridden.
+        network: cfg.network as `eip155:${number}`,
       });
       res.json({ verification: summarizeVerification(verification), intent: intentSummary(sess) });
     } catch (err) {

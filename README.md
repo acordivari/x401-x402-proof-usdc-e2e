@@ -38,7 +38,7 @@ injection, not a rewrite. Suite grew to **153 tests / 24 files**.
 
 1. **Three wallet workflows + official Proof SDKs** (`WALLET_FLOW`) — *self-issued*
    (browser-held SD-JWT-VC), *Proof-hosted* (real Proof wallet via
-   `@proof.com/proof-vc-common` + the `<proof-verify-id>` web component from
+   `@proof.com/proof-vc-server` + the `<proof-verify-id>` web component from
    `@proof.com/proof-vc-web`), and *delegated*. The live verifier now pins Proof's
    committed trust store via the SDK.
 2. **Delegated autonomous mandate** — the headline: a human presents **once** to
@@ -109,7 +109,7 @@ the agent settles over x402.
 1. **Self-issued** — browser-held local SD-JWT-VC, selective disclosure in-browser,
    you approve each purchase. Fully offline (`PROOF_MODE=local`).
 2. **Proof-hosted** — the real Proof hosted presentation, driven by the official
-   **`@proof.com/proof-vc-common`** SDK (`getAuthorizationRequestURL` + PAR +
+   **`@proof.com/proof-vc-server`** SDK (`authorizationUrl` + PAR +
    `verifyVPToken`, pinned to Proof's trust store via `trustRoot`) with Proof's
    **`<proof-verify-id>`** web component (`@proof.com/proof-vc-web`). Set
    `PROOF_CLIENT_ID`/`PROOF_CLIENT_SECRET`, `PROOF_LOGIN_HINT`, `PROOF_ENVIRONMENT`.
@@ -194,7 +194,7 @@ settlement are unchanged.
 - **New seam** (`packages/credentials`): a `VerifiableCredentialVerifier` with two
   implementations behind one interface — `localVcVerifier` (self-issued SD-JWT-VC,
   offline/CI) and `proofSdkVcVerifier` (live Proof via the official
-  `@proof.com/proof-vc-common` SDK, pinned to Proof's committed trust store).
+  `@proof.com/proof-vc-server` SDK, pinned to Proof's committed trust store).
   Mirrors the facilitator/identity seams; selected by `PROOF_MODE`.
 - **Three wallet workflows** (`WALLET_FLOW`): self-issued, Proof-hosted (SDK +
   `<proof-verify-id>` web component), and **delegated** — a presigned, durable,

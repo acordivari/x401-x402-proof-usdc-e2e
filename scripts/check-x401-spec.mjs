@@ -8,13 +8,15 @@
  * encryptor + the `{vp_token, challenge}` result envelope (see x401-binding.ts),
  * so a spec change to nonce / DC-API request `data` / Result Artifact shape is a
  * class of change the SDK will NOT surface for us — only proof/x401 warns us.
+ * The Proof VC SDK family is watched too: proof-vc went 0.2.0 → 0.3.1 (a
+ * breaking common/server split) on 2026-07-22 without this script noticing,
+ * because it only tracked x401-node — hence the multi-package sweep below.
  *
- * This script polls three independent signals and compares them to a committed
+ * This script polls independent signals and compares them to a committed
  * baseline (`x401-spec.lock.json`):
- *   1. npm latest of @proof.com/x401-node   → "are we behind the SDK?"
- *   2. proof/x401-node latest release/tag    → "did the SDK repo ship something?"
- *   3. proof/x401 latest release/tag/commit  → "did the SPEC move?" (may or may
- *                                               not be in the SDK yet)
+ *   1. npm latest of every @proof.com package we consume → "are we behind?"
+ *   2. proof/x401-node + proof/proof-vc-common releases  → "did an SDK repo ship?"
+ *   3. proof/x401 latest release/tag/commit              → "did the SPEC move?"
  *
  * INVISIBLE BY DESIGN: every call is an unauthenticated public HTTPS GET (npm
  * registry JSON + api.github.com). No auth token, so the calls are tied to no
@@ -38,11 +40,28 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PKG = "@proof.com/x401-node";
-const REPO_SDK = "proof/x401-node";
-const REPO_SPEC = "proof/x401";
-const UA = "agentic-payments-x401-drift-check";
+/**
+ * Every @proof.com package we consume. `declaredIn` is the workspace
+ * package.json that owns the direct dependency (null = transitive: common is
+ * the shared base exact-pinned by server/web, and a bump there is the earliest
+ * signal the family moved). `specConst` marks the one package that embeds the
+ * x401 spec version.
+ */
+const PACKAGES = [
+  { name: "@proof.com/x401-node", declaredIn: "packages/credentials/package.json", specConst: true },
+  { name: "@proof.com/proof-vc-server", declaredIn: "packages/credentials/package.json" },
+  { name: "@proof.com/proof-vc-web", declaredIn: "apps/wallet-demo/package.json" },
+  { name: "@proof.com/proof-vc-common", declaredIn: null },
+];
 
+/** proof/proof-vc-common is a monorepo hosting common + server + web. */
+const REPOS = [
+  { repo: "proof/x401", spec: true },
+  { repo: "proof/x401-node" },
+  { repo: "proof/proof-vc-common" },
+];
+
+const UA = "agentic-payments-x401-drift-check";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const lockPath = join(root, "x401-spec.lock.json");
 const args = new Set(process.argv.slice(2));
@@ -72,8 +91,8 @@ async function getJson(url, label, { soft404 = false } = {}) {
 }
 
 /** Latest published npm version (dist-tags.latest). */
-async function npmLatest() {
-  const meta = await getJson(`https://registry.npmjs.org/${PKG}`, "npm registry");
+async function npmLatest(pkg) {
+  const meta = await getJson(`https://registry.npmjs.org/${pkg}`, `npm registry (${pkg})`);
   return meta?.["dist-tags"]?.latest ?? null;
 }
 
@@ -96,47 +115,58 @@ async function githubLatest(repo) {
 }
 
 /**
- * Read our installed SDK: package version, spec version const, declared range.
- * Reads the package.json directly (the SDK's `exports` map blocks resolving the
- * `/package.json` subpath), checking the workspace-nested install first, then a
- * hoisted root install.
+ * Read an installed package's version by finding its package.json directly
+ * (several SDKs' `exports` maps block resolving the `/package.json` subpath),
+ * checking workspace-nested installs first, then the hoisted root install.
  */
-function readInstalled() {
+function findInstalledPkgJson(name) {
+  const segs = name.split("/");
   const candidates = [
-    join(root, "packages/credentials/node_modules", ...PKG.split("/"), "package.json"),
-    join(root, "node_modules", ...PKG.split("/"), "package.json"),
+    join(root, "packages/credentials/node_modules", ...segs, "package.json"),
+    join(root, "apps/wallet-demo/node_modules", ...segs, "package.json"),
+    // The copy proof-vc-server actually loads (it exact-pins proof-vc-common,
+    // so npm may nest a different version than the hoisted/web one).
+    join(root, "node_modules/@proof.com/proof-vc-server/node_modules", ...segs, "package.json"),
+    join(root, "node_modules", ...segs, "package.json"),
   ];
-  const pkgJsonPath = candidates.find((p) => {
+  for (const p of candidates) {
     try {
       readFileSync(p);
-      return true;
+      return p;
     } catch {
-      return false;
+      /* try next */
     }
-  });
+  }
+  return null;
+}
+
+function readPackageState({ name, declaredIn, specConst }) {
+  let declaredRange = null;
+  if (declaredIn) {
+    try {
+      declaredRange = JSON.parse(readFileSync(join(root, declaredIn), "utf8")).dependencies?.[name] ?? null;
+    } catch {
+      /* reported via installed check below */
+    }
+  }
+
+  const pkgJsonPath = findInstalledPkgJson(name);
   if (!pkgJsonPath) {
-    warnings.push(`installed ${PKG} not found (looked in ${candidates.join(", ")})`);
-    return { installedVersion: null, specVersion: null };
+    warnings.push(`installed ${name} not found in node_modules`);
+    return { declaredRange, installedVersion: null, specVersion: null };
   }
   const installedVersion = JSON.parse(readFileSync(pkgJsonPath, "utf8")).version ?? null;
 
   let specVersion = null;
-  try {
-    const constants = readFileSync(join(dirname(pkgJsonPath), "dist/constants.js"), "utf8");
-    specVersion = constants.match(/X401_VERSION\s*=\s*"([^"]+)"/)?.[1] ?? null;
-  } catch (err) {
-    warnings.push(`could not read X401_VERSION: ${err.message}`);
+  if (specConst) {
+    try {
+      const constants = readFileSync(join(dirname(pkgJsonPath), "dist/constants.js"), "utf8");
+      specVersion = constants.match(/X401_VERSION\s*=\s*"([^"]+)"/)?.[1] ?? null;
+    } catch (err) {
+      warnings.push(`could not read X401_VERSION: ${err.message}`);
+    }
   }
-  return { installedVersion, specVersion };
-}
-
-function readDeclaredRange() {
-  try {
-    const pkg = JSON.parse(readFileSync(join(root, "packages/credentials/package.json"), "utf8"));
-    return pkg.dependencies?.[PKG] ?? null;
-  } catch {
-    return null;
-  }
+  return { declaredRange, installedVersion, specVersion };
 }
 
 function readLock() {
@@ -152,18 +182,15 @@ function sameRef(a, b) {
   return a.kind === b.kind && a.ref === b.ref;
 }
 
-const { installedVersion, specVersion } = readInstalled();
-const declaredRange = readDeclaredRange();
-const [npm, sdkRepo, specRepo] = await Promise.all([
-  npmLatest(),
-  githubLatest(REPO_SDK),
-  githubLatest(REPO_SPEC),
-]);
+const packages = {};
+for (const spec of PACKAGES) {
+  const state = readPackageState(spec);
+  packages[spec.name] = { ...state, npmLatest: await npmLatest(spec.name) };
+}
+const repos = {};
+for (const { repo } of REPOS) repos[repo] = await githubLatest(repo);
 
-const current = {
-  app: { declaredRange, installedVersion, specVersion },
-  upstream: { npmLatest: npm, x401NodeLatest: sdkRepo, x401SpecLatest: specRepo },
-};
+const current = { packages, repos };
 
 if (UPDATE) {
   const lock = {
@@ -181,26 +208,36 @@ if (UPDATE) {
 const lock = readLock();
 const drift = [];
 
-// Signal 1: are we behind the published SDK?
-if (npm && installedVersion && npm !== installedVersion) {
-  drift.push(`app is behind npm: installed ${installedVersion} < latest ${npm} (bump ${PKG})`);
+for (const [name, p] of Object.entries(packages)) {
+  // Signal 1: are we behind the published package?
+  if (p.npmLatest && p.installedVersion && p.npmLatest !== p.installedVersion) {
+    drift.push(`app is behind npm: ${name} installed ${p.installedVersion} < latest ${p.npmLatest}`);
+  }
+  // Signal 2: has npm moved since our last reconciled baseline?
+  const base = lock?.packages?.[name];
+  if (p.npmLatest && base?.npmLatest && p.npmLatest !== base.npmLatest) {
+    drift.push(`npm latest moved: ${name} ${base.npmLatest} → ${p.npmLatest}`);
+  }
 }
 
-// Signals 2 & 3: has upstream moved since our last reconciled baseline?
-if (lock) {
-  if (npm && lock.upstream?.npmLatest && npm !== lock.upstream.npmLatest) {
-    drift.push(`npm latest moved: ${lock.upstream.npmLatest} → ${npm}`);
+// Signal 3: have the SDK/spec repos moved since the baseline?
+if (lock?.repos) {
+  for (const { repo, spec } of REPOS) {
+    const cur = repos[repo];
+    const base = lock.repos[repo];
+    if (cur && base && !sameRef(cur, base)) {
+      drift.push(
+        `${repo}${spec ? " (SPEC)" : ""} moved: ${refStr(base)} → ${refStr(cur)}${
+          spec
+            ? " — may not be in the SDK yet; check whether it touches nonce/DC-API request data/Result Artifact (we vendor that layer)"
+            : ""
+        }`,
+      );
+    }
   }
-  if (sdkRepo && lock.upstream?.x401NodeLatest && !sameRef(sdkRepo, lock.upstream.x401NodeLatest)) {
-    drift.push(`${REPO_SDK} moved: ${refStr(lock.upstream.x401NodeLatest)} → ${refStr(sdkRepo)}`);
-  }
-  if (specRepo && lock.upstream?.x401SpecLatest && !sameRef(specRepo, lock.upstream.x401SpecLatest)) {
-    drift.push(
-      `${REPO_SPEC} (SPEC) moved: ${refStr(lock.upstream.x401SpecLatest)} → ${refStr(specRepo)} — may not be in the SDK yet; check whether it touches nonce/DC-API request data/Result Artifact (we vendor that layer)`,
-    );
-  }
-} else {
-  warnings.push(`no baseline at ${lockPath} — run \`npm run check:x401 -- --update\` to seed it`);
+}
+if (!lock?.packages || !lock?.repos) {
+  warnings.push(`no multi-package baseline at ${lockPath} — run \`npm run check:x401 -- --update\` to seed it`);
 }
 
 const fetchFailed = warnings.some((w) => /HTTP \d|fetch|ENOTFOUND|ECONN|not resolvable/i.test(w));
@@ -233,13 +270,17 @@ function refStr(r) {
   return r ? `${r.ref} (${r.kind}${r.date ? `, ${r.date.slice(0, 10)}` : ""})` : "unknown";
 }
 function fmtState(c) {
-  return [
-    `${PKG}`,
-    `  our range        : ${c.app.declaredRange ?? "?"}`,
-    `  installed (npm)  : ${c.app.installedVersion ?? "?"}`,
-    `  spec impl const  : X401_VERSION=${c.app.specVersion ?? "?"}`,
-    `  npm latest       : ${c.upstream.npmLatest ?? "unknown"}`,
-    `  ${REPO_SDK.padEnd(15)}: ${refStr(c.upstream.x401NodeLatest)}`,
-    `  ${REPO_SPEC.padEnd(15)}: ${refStr(c.upstream.x401SpecLatest)}`,
-  ].join("\n");
+  const lines = [];
+  for (const [name, p] of Object.entries(c.packages)) {
+    lines.push(name);
+    lines.push(`  our range   : ${p.declaredRange ?? "(transitive)"}`);
+    lines.push(`  installed   : ${p.installedVersion ?? "?"}`);
+    if (p.specVersion !== null) lines.push(`  spec const  : X401_VERSION=${p.specVersion}`);
+    lines.push(`  npm latest  : ${p.npmLatest ?? "unknown"}`);
+  }
+  lines.push("repos:");
+  for (const { repo, spec } of REPOS) {
+    lines.push(`  ${(repo + (spec ? " (SPEC)" : "")).padEnd(28)}: ${refStr(c.repos[repo])}`);
+  }
+  return lines.join("\n");
 }

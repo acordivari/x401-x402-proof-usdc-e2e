@@ -101,9 +101,9 @@ replayed against a different amount or merchant** (`txDataBound`).
 | Property | Check |
 |---|---|
 | Challenge authenticity / freshness | `verifier.verifyChallenge` — verifier id, resource, method, expiry, encryptor-sealed state |
-| Genuine credential | Live: `@proof.com/proof-vc-common` `verifyVPToken` verifies the SD-JWT-VC issuer `x5c` chain (ES256) against Proof's committed trust store (`trustRoot`). Local mode uses a resolved issuer key instead. (A hand-rolled x5c fallback verifier existed pre-SDK; removed 2026-07 — see git history.) |
+| Genuine credential | Live: `@proof.com/proof-vc-server` `verifyVPToken` verifies the SD-JWT-VC issuer `x5c` chain (ES256) against Proof's committed trust store (`trustRoot`). Local mode uses a resolved issuer key instead. (A hand-rolled x5c fallback verifier existed pre-SDK; removed 2026-07 — see git history.) |
 | Holder actually presented it | KB-JWT verified against the credential's `cnf` key (`holderBound`) |
-| Anti-replay | KB-JWT `nonce` == challenge value (`nonceBound`) |
+| Anti-replay | KB-JWT `nonce` == challenge value (`nonceBound`) — enforced by our adapter; SDK 0.3.x exposes the nonce (`getNonce()`) instead of checking it |
 | Right info disclosed | DCQL `requiredClaims` all present |
 | Bound to *this* payment | recomputed `transaction_data` digest == sealed digest (`txDataBound`) |
 
@@ -120,7 +120,7 @@ behind one interface (like `FacilitatorClient` and `IdentityVerifier`):
 | Verifier | Trust source | Used by |
 |---|---|---|
 | `localVcVerifier` | a pinned self-issuer key (`LocalVcIssuer`) | the offline / self-issued path, tests, CI |
-| `proofSdkVcVerifier` | `@proof.com/proof-vc-common` `verifyVPToken`, pinned to Proof's committed trust store via `trustRoot` | the live Proof-hosted path |
+| `proofSdkVcVerifier` | `@proof.com/proof-vc-server` `verifyVPToken`, pinned to Proof's committed trust store via `trustRoot` | the live Proof-hosted path |
 
 `createVcVerifier({ mode, proof })` selects one (`PROOF_MODE`). Mocks implement
 the real interface, so tests exercise the same verification path as live. (A
@@ -135,7 +135,7 @@ same x401 → HAM → x402 spine:
 | Workflow | Identity | Per-purchase human? | Drives |
 |---|---|---|---|
 | **Self-issued** | browser-held local SD-JWT-VC | yes (in-browser consent) | `localVcVerifier` + `LocalWallet` |
-| **Proof-hosted** | real Proof wallet | yes (Proof hosted screen) | `proof-vc-common` `getAuthorizationRequestURL` + `verifyVPToken`; the official `<proof-verify-id>` web component (`proof-vc-web`) launches the request with our PAR-built URL |
+| **Proof-hosted** | real Proof wallet | yes (Proof hosted screen) | `proof-vc-server` client `authorizationUrl` (PAR) + `verifyVPToken`; the official `<proof-verify-id>` web component (`proof-vc-web`) launches the request with our PAR-built URL |
 | **Delegated** (autonomous) | one upfront grant (either of the above) | **no** | a durable, scoped `IntentMandate` the agent spends within |
 
 ### Delegated mandate (presigned identity = authorization)

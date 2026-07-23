@@ -19,6 +19,7 @@ import {
   collect,
   nowSeconds,
   validateCartAgainstIntent,
+  validatePayerAgainstIntent,
   validatePaymentAgainstCart,
 } from "@agentic-payments/shared";
 import {
@@ -123,11 +124,19 @@ export function createMandateGate(opts: MandateGateOptions) {
     // Unpaid challenge: scope is good — let the x402 paywall emit its 402.
     if (!payment.nonce || !payment.value || !payment.from) return next();
 
-    // Paid request: the payer must be the authorized wallet, and the signed
-    // amount must equal the merchant's price (Payment ⊆ Cart catches the latter
-    // because the cart total is the catalog price, not the agent's figure).
-    if (payment.from.toLowerCase() !== intent.agentWallet.toLowerCase()) {
-      return deny(res, 403, "payer is not the authorized agent wallet");
+    // Paid request: the payer identity derived from the signed EIP-3009
+    // authorization (`from` + the chain it settles on — the non-settling verify
+    // step) must match the mandate's bound agent, chain id included when the
+    // intent carries a wallet-native did:pkh agentId. A mismatch is refused
+    // BEFORE settlement with x401 PR #17's `payer_agent_mismatch` error. The
+    // signed amount is caught below by Payment ⊆ Cart (the cart total is the
+    // catalog price, not the agent's figure).
+    const payerScope = validatePayerAgainstIntent(
+      { address: payment.from, network: opts.network },
+      intent,
+    );
+    if (!payerScope.ok) {
+      return deny(res, 403, "payer_agent_mismatch", payerScope.violations);
     }
     const paymentMandate = buildPaymentMandate({
       cartId: cart.id,

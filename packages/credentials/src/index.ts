@@ -7,7 +7,7 @@
  *   - transaction-data         : payment-mandate binding (the 401↔402 join)
  *   - verifier                 : VerifiableCredentialVerifier seam (local)
  *   - proof-sdk                : live Proof verify + hosted-request URL via
- *                                @proof.com/proof-vc-common
+ *                                @proof.com/proof-vc-server
  *   - x401                     : @proof.com/x401-node wire wrappers + end-to-end
  *                                presentation verification
  */

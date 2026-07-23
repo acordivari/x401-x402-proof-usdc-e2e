@@ -24,6 +24,7 @@ import {
   BASE_MAINNET,
   BASE_SEPOLIA,
   atomicToDollars,
+  buildAgentDid,
   dollarsToAtomic,
   loadEnv,
   type IntentMandate,
@@ -130,7 +131,7 @@ export async function issueLiveGrant(opts: LiveGrantOptions): Promise<LiveMandat
     audience: VERIFIER_ID,
   });
   const { header: resultHeader } = packCredentialResult({
-    payload, agentId: `did:agent:${opts.agentWallet}`, vpToken: presented.vpToken,
+    payload, agentId: buildAgentDid(opts.network.caip2, opts.agentWallet), vpToken: presented.vpToken,
   });
 
   // Verify exactly as a standalone verifier would: challenge + credential +
@@ -162,6 +163,9 @@ export async function issueLiveGrant(opts: LiveGrantOptions): Promise<LiveMandat
       allowedCategories: ["open-web"],
     },
     ttlSeconds: opts.ttlSeconds,
+    // Bind the wallet-native agentId to the chain this grant pays on — the
+    // chain id is part of the identity (x401 PR #17).
+    network: opts.network.caip2,
   });
 
   return {

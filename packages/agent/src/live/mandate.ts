@@ -10,6 +10,7 @@ import {
   IntentMandate,
   collect,
   nowSeconds,
+  parseAgentDid,
   type ValidationResult,
 } from "@agentic-payments/shared";
 import { MandateVerifier, trustedKeyFromJwk } from "@agentic-payments/identity";
@@ -69,5 +70,26 @@ export async function verifyMandateGrant(input: VerifyGrantInput): Promise<Valid
     !input.network || input.network === grant.network
       ? null
       : `mandate was granted for ${grant.network}, not ${input.network}`,
+    ...agentDidViolations(grant, input),
   ]);
+}
+
+/**
+ * Wallet-native agentId binding (did:pkh, x401 PR #17): when the mandate
+ * carries one, the chain id is part of the identity — the wallet AND network
+ * this run pays with must both match it. Fail-closed on an unreadable binding.
+ */
+function agentDidViolations(grant: LiveMandateFile, input: VerifyGrantInput): (string | null)[] {
+  const agentId = grant.intent.agentId;
+  if (agentId === undefined) return [];
+  const bound = parseAgentDid(agentId);
+  if (!bound) return [`mandate agentId ${agentId} is not a valid did:pkh identifier`];
+  return [
+    !input.agentWallet || bound.address === input.agentWallet.toLowerCase()
+      ? null
+      : `mandate agentId binds wallet ${bound.address}, not this wallet ${input.agentWallet}`,
+    !input.network || bound.network === input.network
+      ? null
+      : `mandate agentId binds chain ${bound.network}, not this run's ${input.network}`,
+  ];
 }

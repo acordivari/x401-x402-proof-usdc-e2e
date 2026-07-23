@@ -347,7 +347,7 @@
       <div class="card">
         <h2><span class="step">1</span> Wallet</h2>
         {#if proofIdentity}
-          <p class="note">Proof-hosted: the credential lives in your <b>Proof</b> wallet. Selective disclosure happens on Proof's hosted flow (driven by <span class="mono">@proof.com/proof-vc-common</span>); we decode the returned presentation to visualize it.</p>
+          <p class="note">Proof-hosted: the credential lives in your <b>Proof</b> wallet. Selective disclosure happens on Proof's hosted flow (driven by <span class="mono">@proof.com/proof-vc-server</span>); we decode the returned presentation to visualize it.</p>
         {:else}
           <div class="row spread">
             <div class="row">

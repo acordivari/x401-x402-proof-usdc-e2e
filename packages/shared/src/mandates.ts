@@ -41,6 +41,31 @@ export const Principal = z.object({
 export type Principal = z.infer<typeof Principal>;
 
 /**
+ * Wallet-native Agent Identifier (`did:pkh:eip155:<chainId>:<address>`) —
+ * the optional identity profile proposed in x401 PR #17: it ties an Agent to
+ * an EVM account, with the chain id part of the identity.
+ */
+export const AgentDid = z
+  .string()
+  .regex(/^did:pkh:eip155:\d+:0x[0-9a-fA-F]{40}$/, "invalid did:pkh agent identifier");
+
+export function buildAgentDid(network: `eip155:${number}`, address: string): string {
+  return `did:pkh:${network}:${address.toLowerCase()}`;
+}
+
+/** Parse a did:pkh Agent Identifier; address comes back normalized lowercase. */
+export function parseAgentDid(
+  did: string,
+): { network: `eip155:${number}`; address: `0x${string}` } | undefined {
+  const m = /^did:pkh:(eip155:\d+):(0x[0-9a-fA-F]{40})$/.exec(did);
+  if (!m) return undefined;
+  return {
+    network: m[1] as `eip155:${number}`,
+    address: m[2]!.toLowerCase() as `0x${string}`,
+  };
+}
+
+/**
  * Intent Mandate — signed by the human after OIDC login. Authorizes a specific
  * agent wallet to spend up to a cap, at allowlisted merchants, within a window.
  */
@@ -49,6 +74,10 @@ export const IntentMandate = z.object({
   id: z.string().uuid(),
   principal: Principal,
   agentWallet: EvmAddress, // the agent authorized to act for the principal
+  // Wallet-native did:pkh binding of the same agent (x401 PR #17). Optional for
+  // backward compatibility with already-signed mandates; when present, verifiers
+  // MUST match the payer against it with the chain id as part of the identity.
+  agentId: AgentDid.optional(),
   scope: z.object({
     maxAmount: UintString, // atomic USDC cap for the whole intent
     currency: z.literal(USDC_SYMBOL),
@@ -142,6 +171,42 @@ export function validateCartAgainstIntent(
       ? `cart total ${cart.total} exceeds intent cap ${intent.scope.maxAmount}`
       : null,
   ]);
+}
+
+/**
+ * Verify Payer ⊆ Intent — x401 PR #17's proof/payment binding, applied at the
+ * payment protocol's *non-settling* verification step (i.e. BEFORE settlement).
+ * The payer identity is derived from the signed payment authorization (the
+ * EIP-3009 `from` plus the chain the payment settles on) and must match the
+ * intent's wallet binding; when the intent carries a wallet-native `agentId`
+ * (did:pkh), the chain id is part of the identity. Violations carry the PR's
+ * normative `payer_agent_mismatch` error token. Pure — no crypto here.
+ */
+export function validatePayerAgainstIntent(
+  payer: { address: string; network: `eip155:${number}` },
+  intent: IntentMandate,
+): ValidationResult {
+  const address = payer.address.toLowerCase();
+  const violations: (string | null)[] = [
+    address !== intent.agentWallet.toLowerCase()
+      ? `payer_agent_mismatch: payer ${payer.address} is not the authorized agent wallet ${intent.agentWallet}`
+      : null,
+  ];
+  if (intent.agentId !== undefined) {
+    const bound = parseAgentDid(intent.agentId);
+    if (!bound) {
+      // Schema-validated mandates can't hit this, but a foreign mandate might:
+      // an unreadable binding must never widen into "no binding" — fail closed.
+      violations.push(
+        `payer_agent_mismatch: intent agentId ${intent.agentId} is not a valid did:pkh identifier`,
+      );
+    } else if (bound.network !== payer.network || bound.address !== address) {
+      violations.push(
+        `payer_agent_mismatch: payer ${buildAgentDid(payer.network, address)} does not match bound agent ${intent.agentId}`,
+      );
+    }
+  }
+  return collect(violations);
 }
 
 /** Verify Payment ⊆ Cart: same cart, pays the cart merchant the cart total. */

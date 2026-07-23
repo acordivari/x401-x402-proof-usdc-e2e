@@ -59,6 +59,10 @@ wallet** and a **spending scope**.
     "emailVerified": true
   },
   "agentWallet": "0x…",          // the only wallet this Intent authorizes
+  // Wallet-native did:pkh form of the same binding (x401 PR #17). Optional for
+  // pre-existing signed mandates; when present the CHAIN ID is part of the
+  // identity a verifier must match the payer against.
+  "agentId": "did:pkh:eip155:84532:0x…",
   "scope": {
     "maxAmount": "5000000",      // atomic USDC cap for the WHOLE intent
     "currency": "USDC",
@@ -147,7 +151,12 @@ On each `/buy`, the gate (`mandate-gate.ts`) enforces, in order:
 4. **Cumulative cap** — `committed + reserved + thisPrice ≤ maxAmount`
    (the spend ledger; see §6).
 5. On the paid request additionally:
-   - **payer == `agentWallet`** (the signed `from` is the authorized wallet),
+   - **Payer ⊆ Intent** (`validatePayerAgainstIntent`): the payer identity
+     derived from the signed EIP-3009 authorization (`from` + the chain it
+     settles on) must match `agentWallet` — and, when the Intent carries a
+     wallet-native `agentId` (did:pkh), the **chain id is part of the
+     identity**. A mismatch is refused *before settlement* with x401 PR #17's
+     normative `payer_agent_mismatch` error,
    - **Payment ⊆ Cart** (`validatePaymentAgainstCart`): `payTo == merchant` and
      `amount == cart.total` — i.e. the agent signed for **exactly the merchant's
      price**.
@@ -183,7 +192,8 @@ no phantom spend, no double count.
 | Forged mandate | Signature must verify against a **trusted** key (`kid`). |
 | Agent pays itself / a different merchant | `payTo == merchant` checked. |
 | Agent underpays to dodge the cap | Cart total = **catalog price**; `amount == total` enforced. |
-| A different wallet rides a stolen Intent | `payer == agentWallet` checked. |
+| A different wallet rides a stolen Intent | Payer ⊆ Intent: `payer == agentWallet`, plus the did:pkh `agentId` (chain-inclusive) ⇒ `payer_agent_mismatch`. |
+| Same wallet key replayed on another chain | The did:pkh `agentId` folds the chain id into the identity; a cross-chain payer mismatches. |
 | Over-budget across many buys | Cumulative spend ledger. |
 | On-chain replay of a payment | EIP-3009 nonce is single-use on USDC. |
 | Reservation leak exhausting the cap | Released on non-200 finish (regression-tested). |

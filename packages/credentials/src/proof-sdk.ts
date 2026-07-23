@@ -1,17 +1,21 @@
 /**
- * Live Proof path built on the official `@proof.com/proof-vc-common` SDK (the
- * hand-rolled OAuth/OID4VP/x5c equivalents it replaced were removed 2026-07 —
- * see git history). Two server-side capabilities:
+ * Live Proof path built on the official Proof VC SDK. Since 0.3.1 the SDK is
+ * split: `@proof.com/proof-vc-server` carries the verifier, transaction_data
+ * and the server-side request client (and re-exports the client/DCQL half,
+ * `@proof.com/proof-vc-common`). Two server-side capabilities:
  *
- *   - `proofSdkVcVerifier()` : a `VerifiableCredentialVerifier` that delegates to
- *     the SDK's `verifyVPToken`. The SDK decodes the DCQL `vp_token` envelope,
- *     verifies each SD-JWT-VC's issuer x5c chain against Proof's committed trust
- *     store (`trustRoot`), and verifies the holder KB-JWT against the nonce —
- *     pinning Proof's actual Root CA via `trustRoot`, not an intermediate.
- *   - `buildProofSdkAuthorizeUrl()` : builds the hosted OID4VP authorize URL via
- *     the SDK's `getAuthorizationRequestURL` (with Pushed Authorization Requests,
- *     so the client secret never leaves the server and the payment-mandate URL
- *     stays small).
+ *   - `proofSdkVcVerifier()` : a `VerifiableCredentialVerifier` that delegates
+ *     to the SDK's `createVerifier(trustRoot).verifyVPToken`. The SDK decodes
+ *     the DCQL `vp_token` envelope, verifies each SD-JWT-VC's issuer x5c chain
+ *     against Proof's committed trust store (`trustRoot`, pinning Proof's
+ *     actual Root CA), and verifies the holder KB-JWT signature. Since 0.3.x
+ *     the SDK does NOT compare the OID4VP nonce itself — it exposes it via
+ *     `ProofCredential.getNonce()` — so the nonce↔challenge equality check in
+ *     this adapter is the load-bearing, fail-closed replay gate.
+ *   - `buildProofSdkAuthorizeUrl()` : builds the hosted OID4VP authorize URL
+ *     via the SDK's server client (with Pushed Authorization Requests, so the
+ *     client secret never leaves the server and the payment-mandate URL stays
+ *     small).
  *
  * Server-only (handles the client secret + Node trust store), so this lives in
  * the node barrel (`index.ts`) and NOT the browser barrel. The x401
@@ -20,13 +24,16 @@
  */
 import { X509Certificate } from "node:crypto";
 import {
-  init as proofInit,
-  getAuthorizationRequestURL,
-  verifyVPToken,
+  createClient,
+  createVerifier,
   transactionData as proofTransactionData,
-  type NodeInitParams,
+  type Scope,
+  type ServerClientConfig,
+  type ServerVCClient,
   type TransactionData,
-} from "@proof.com/proof-vc-common";
+  type TrustRoot,
+  type Verifier,
+} from "@proof.com/proof-vc-server";
 import { collect } from "@agentic-payments/shared";
 import { PROOF_BASIC_SCOPE, PROOF_CREDENTIAL_ID } from "./proof-credential.ts";
 import type {
@@ -45,21 +52,50 @@ const RESERVED_CLAIMS = new Set([
 ]);
 
 /**
- * The SDK keeps a module-level singleton client, so we init it once. Re-init is a
- * no-op (and the SDK itself throws on a second production init), so we guard it.
+ * One flat config object mirroring the pre-split SDK's `NodeInitParams`, so
+ * callers keep configuring in one place: `trustRoot` feeds the verifier, the
+ * request fields feed the client.
  */
-let configured = false;
-export function configureProofSdk(params: NodeInitParams): void {
-  if (configured) return;
-  proofInit(params);
-  configured = true;
+export interface ProofSdkConfig {
+  trustRoot?: TrustRoot;
+  environment?: ServerClientConfig["environment"];
+  clientId?: string;
+  clientSecret?: string;
+  callbackUri?: string;
+  responseMode?: ServerClientConfig["responseMode"];
+  usePushedAuthorizationRequest?: boolean;
+}
+
+/**
+ * First-config-wins module state (parity with the pre-split SDK's singleton,
+ * which threw on re-init). The request client is only built when the request
+ * config (environment/clientId/callbackUri) is present, so a verify-only
+ * process needs no client credentials.
+ */
+let sdkVerifier: Verifier | undefined;
+let sdkClient: ServerVCClient | undefined;
+export function configureProofSdk(params: ProofSdkConfig): void {
+  if (sdkVerifier) return;
+  sdkVerifier = createVerifier({ trustRoot: params.trustRoot ?? "development" });
+  if (params.environment && params.clientId && params.callbackUri) {
+    sdkClient = createClient({
+      environment: params.environment,
+      clientId: params.clientId,
+      callbackUri: params.callbackUri,
+      ...(params.responseMode !== undefined ? { responseMode: params.responseMode } : {}),
+      ...(params.clientSecret !== undefined ? { clientSecret: params.clientSecret } : {}),
+      ...(params.usePushedAuthorizationRequest !== undefined
+        ? { usePushedAuthorizationRequest: params.usePushedAuthorizationRequest }
+        : {}),
+    });
+  }
 }
 
 export interface ProofSdkVerifierOptions {
   /** Proof trust store to pin the issuer chain to. Default: "development" (sandbox). */
-  trustRoot?: NodeInitParams["trustRoot"];
-  /** Extra init params (clientId/secret/callbackUri) when this process also builds requests. */
-  init?: Omit<NodeInitParams, "trustRoot">;
+  trustRoot?: TrustRoot;
+  /** Extra config (clientId/secret/callbackUri) when this process also builds requests. */
+  init?: Omit<ProofSdkConfig, "trustRoot">;
 }
 
 /**
@@ -82,7 +118,8 @@ export function proofSdkVcVerifier(opts: ProofSdkVerifierOptions = {}): Verifiab
       let issuerCert: { subject?: string; issuer?: string } | undefined;
 
       try {
-        const vpt = await verifyVPToken({ encodedVPToken: input.vpToken, nonce: input.nonce });
+        if (!sdkVerifier) throw new Error("Proof SDK verifier not configured");
+        const vpt = await sdkVerifier.verifyVPToken({ encodedVPToken: input.vpToken });
         const cred = vpt[PROOF_CREDENTIAL_ID]?.[0];
         if (!cred) throw new Error(`vp_token carried no '${PROOF_CREDENTIAL_ID}' credential`);
 
@@ -96,19 +133,20 @@ export function proofSdkVcVerifier(opts: ProofSdkVerifierOptions = {}): Verifiab
           }
         }
 
-        // The KB-JWT (holder-signed) carries the nonce binding and — when a
-        // payment-mandate transaction_data was presented — the approved payment.
+        // The SDK verified the KB-JWT *signature*; comparing its nonce to our
+        // challenge is on us (0.3.x exposes it via getNonce()). A mismatch is a
+        // replayed or cross-session presentation → hard violation.
+        nonceBound = cred.getNonce() === input.nonce;
+
+        // When a payment-mandate transaction_data was presented, the KB-JWT
+        // also carries the holder-approved payment.
         const decoded = cred.getSDJWT() as {
           kbJwt?: { payload?: Record<string, unknown> };
           jwt?: { header?: Record<string, unknown> };
         };
-        const kb = decoded.kbJwt?.payload;
-        nonceBound = kb?.nonce === input.nonce;
-        paymentApproved = kb?.payment_mandate_v1;
+        paymentApproved = decoded.kbJwt?.payload?.payment_mandate_v1;
         issuerCert = leafCertSummary(decoded.jwt?.header?.x5c);
 
-        // The SDK already enforced these (it throws otherwise); assert for parity
-        // with the local verifier's surfaced flags.
         if (!holderBound) violations.push("credential is not bound to a holder key (cnf)");
         if (!nonceBound) violations.push("key-binding nonce does not match the challenge");
       } catch (err) {
@@ -141,13 +179,19 @@ export interface ProofSdkAuthorizeInput {
 }
 
 /**
- * Build the hosted Proof authorize URL via the SDK. Requires the SDK to have been
- * configured with the request config (clientId/secret/callbackUri/PAR), either at
- * construction of `proofSdkVcVerifier({ init })` or via `configureProofSdk`.
+ * Build the hosted Proof authorize URL via the SDK. Requires the SDK to have
+ * been configured with the request config (environment/clientId/callbackUri),
+ * either at construction of `proofSdkVcVerifier({ init })` or via
+ * `configureProofSdk`.
  */
 export async function buildProofSdkAuthorizeUrl(input: ProofSdkAuthorizeInput): Promise<string> {
-  return getAuthorizationRequestURL({
-    scope: (input.scope ?? PROOF_BASIC_SCOPE) as never,
+  if (!sdkClient) {
+    throw new Error(
+      "Proof SDK request config missing — configureProofSdk needs environment + clientId + callbackUri before building authorize URLs",
+    );
+  }
+  return sdkClient.authorizationUrl({
+    scope: (input.scope ?? PROOF_BASIC_SCOPE) as Scope,
     nonce: input.nonce,
     ...(input.state !== undefined ? { state: input.state } : {}),
     ...(input.loginHint !== undefined ? { loginHint: input.loginHint } : {}),

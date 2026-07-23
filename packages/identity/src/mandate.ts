@@ -9,6 +9,8 @@
 import { randomUUID } from "node:crypto";
 import { CompactSign, compactVerify, type KeyLike } from "jose";
 import {
+  X402_NETWORK,
+  buildAgentDid,
   cartItemsTotal,
   collect,
   nowSeconds,
@@ -97,6 +99,8 @@ export interface IssueIntentRequest {
   agentWallet: `0x${string}`;
   scope: IntentScope;
   ttlSeconds?: number;
+  /** CAIP-2 chain the wallet-native agentId binds to. Default: the sandbox network. */
+  network?: `eip155:${number}`;
 }
 
 /**
@@ -125,7 +129,7 @@ export class AuthorizationService {
 
   async issueIntent(req: IssueIntentRequest): Promise<IntentMandate> {
     const principal = await this.identity.verify(req.idToken);
-    return this.signIntentFor(principal, req.agentWallet, req.scope, req.ttlSeconds);
+    return this.signIntentFor(principal, req.agentWallet, req.scope, req.ttlSeconds, req.network);
   }
 
   /**
@@ -144,7 +148,7 @@ export class AuthorizationService {
       );
     }
     const principal = principalFromAuthorization(req.authorization, req.presentationDigest);
-    return this.signIntentFor(principal, req.agentWallet, req.scope, req.ttlSeconds);
+    return this.signIntentFor(principal, req.agentWallet, req.scope, req.ttlSeconds, req.network);
   }
 
   private async signIntentFor(
@@ -152,6 +156,7 @@ export class AuthorizationService {
     agentWallet: `0x${string}`,
     scope: IntentScope,
     ttlSeconds?: number,
+    network?: `eip155:${number}`,
   ): Promise<IntentMandate> {
     const issuedAt = this.now();
     const ttl = ttlSeconds ?? 3600;
@@ -160,6 +165,9 @@ export class AuthorizationService {
       id: randomUUID(),
       principal,
       agentWallet,
+      // Wallet-native did:pkh binding (x401 PR #17): same agent, but with the
+      // chain id folded into the identity the merchant matches the payer against.
+      agentId: buildAgentDid(network ?? X402_NETWORK, agentWallet),
       scope: {
         maxAmount: scope.maxAmount,
         currency: "USDC",
@@ -181,6 +189,8 @@ export interface IssueIntentFromPresentationRequest {
   ttlSeconds?: number;
   /** Optional sha256(vp_token) for the audit trail. */
   presentationDigest?: string;
+  /** CAIP-2 chain the wallet-native agentId binds to. Default: the sandbox network. */
+  network?: `eip155:${number}`;
 }
 
 /** Map a verified VC presentation to a HAM Principal. */

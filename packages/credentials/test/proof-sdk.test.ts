@@ -1,5 +1,5 @@
 /**
- * Unit coverage for the proof-vc-common SDK verifier adapter (`proofSdkVcVerifier`).
+ * Unit coverage for the proof-vc-server SDK verifier adapter (`proofSdkVcVerifier`).
  * The full happy path needs a real Proof-issued vp_token + the live trust root, so
  * it is exercised by the live-gated demo (see docs/X401-PROTOCOL.md), not here.
  * Offline we assert the adapter satisfies the seam and fails *gracefully* (mapped
@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { proofSdkVcVerifier } from "../src/proof-sdk.ts";
 import type { VerifiableCredentialVerifier } from "../src/types.ts";
 
-describe("proofSdkVcVerifier (proof-vc-common adapter)", () => {
+describe("proofSdkVcVerifier (proof-vc-server adapter)", () => {
   const verifier: VerifiableCredentialVerifier = proofSdkVcVerifier({ trustRoot: "development" });
 
   it("implements the VerifiableCredentialVerifier seam", () => {

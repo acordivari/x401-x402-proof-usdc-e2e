@@ -11,7 +11,7 @@ import path from "node:path";
 
 // --- the three selectable wallet workflows ---
 //   self-issued : browser-held local SD-JWT-VC, per-purchase consent (offline)
-//   proof-hosted: real Proof wallet via the proof-vc-common SDK, per-purchase
+//   proof-hosted: real Proof wallet via the proof-vc-server SDK, per-purchase
 //   delegated   : one upfront grant -> a durable, scoped mandate the agent then
 //                 spends autonomously (no per-purchase human approval)
 export const FLOWS = ["self-issued", "proof-hosted", "delegated"] as const;
