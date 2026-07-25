@@ -22,6 +22,8 @@ export interface MerchantConfig {
   /** Settlement retry policy (see ResilientFacilitatorClient). */
   settleMaxAttempts: number;
   settleBaseDelayMs: number;
+  /** Mounts the UCP checkout responder (docs/UCP-HANDLER.md) when true. */
+  ucpEnabled: boolean;
 }
 
 /** Placeholder recipient used until a real MERCHANT_PAY_TO is supplied. */
@@ -41,6 +43,7 @@ export function loadMerchantConfig(
     facilitatorUrl: env.X402_FACILITATOR_URL ?? DEFAULT_FACILITATOR_URL,
     settleMaxAttempts: Number(env.SETTLE_MAX_ATTEMPTS ?? 4),
     settleBaseDelayMs: Number(env.SETTLE_BASE_DELAY_MS ?? 250),
+    ucpEnabled: env.UCP_MERCHANT_ENABLED === "true",
   };
 }
 

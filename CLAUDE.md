@@ -26,7 +26,8 @@ Tests and the demo need **no keys or network**: mock/local implementations are t
 
 ## Architecture
 
-Read `docs/ARCHITECTURE.md` for the what/why; `docs/HAM-PROTOCOL.md` and `docs/X401-PROTOCOL.md` for specs.
+Read `docs/ARCHITECTURE.md` for the what/why; `docs/HAM-PROTOCOL.md` and `docs/X401-PROTOCOL.md` for specs;
+`docs/UCP-HANDLER.md` for the UCP-shaped `payment_handler` responder/client (opt-in, `UCP_MERCHANT_ENABLED`).
 
 ### Workspace layout
 
@@ -34,8 +35,10 @@ Read `docs/ARCHITECTURE.md` for the what/why; `docs/HAM-PROTOCOL.md` and `docs/X
   order state machine, HAM mandate model + scope validators, `ValidationResult`, `PaymentSigner`
   interface, clock helpers. Never redefine these locally.
 - `packages/merchant` — seller: catalog, state-machine-guarded `order-store`, `mandate-gate`,
-  `spend-ledger`, and the facilitator seam (`facilitator/mock.ts`, `facilitator/resilient.ts`).
-- `packages/agent` — headless buyer (`buyer.ts`, `x402-client.ts`, `wallet.ts`) + `src/live/` buyer.
+  `spend-ledger`, the facilitator seam (`facilitator/mock.ts`, `facilitator/resilient.ts`), and an
+  opt-in UCP-shaped checkout responder (`ucp/profile.ts`, `ucp/checkout-routes.ts` — see `docs/UCP-HANDLER.md`).
+- `packages/agent` — headless buyer (`buyer.ts`, `x402-client.ts`, `wallet.ts`) + `src/live/` buyer,
+  including a `UcpCheckoutClient` (`src/live/ucp-checkout.ts`) for the UCP-shaped responder above.
 - `packages/identity` — OIDC verifier (local | Auth0), HAM signing/verification, revocation checkers.
 - `packages/credentials` — x401 verifiable-credentials seam: SD-JWT-VC issue/hold/present, DCQL
   selective disclosure, `transaction_data` payment binding, local vs Proof-SDK verifiers.

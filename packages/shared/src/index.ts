@@ -10,3 +10,4 @@ export * from "./mandates.ts";
 export * from "./validation.ts";
 export * from "./state-machine.ts";
 export * from "./signer.ts";
+export * from "./ucp.ts";

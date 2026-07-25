@@ -30,6 +30,8 @@ import { MemoryOrderStore, type OrderStore } from "./order-store.ts";
 import { createMandateGate } from "./mandate-gate.ts";
 import { InMemorySpendLedger, type SpendLedger } from "./spend-ledger.ts";
 import { decodePaymentAuthorization } from "./x402-headers.ts";
+import { ucpProfileHandler } from "./ucp/profile.ts";
+import { createUcpCheckoutRouter } from "./ucp/checkout-routes.ts";
 import type { MandateVerifier, RevocationChecker } from "@agentic-payments/identity";
 
 export * from "./spend-ledger.ts";
@@ -42,6 +44,12 @@ export interface MerchantAppOptions {
   /** Spend-cap ledger; defaults to a per-process in-memory one. Inject a durable
    *  (file) or global (http) ledger for cross-restart / cross-merchant caps. */
   ledger?: SpendLedger;
+  /**
+   * UCP-shaped payment_handler responder (see packages/merchant/src/ucp/ +
+   * docs/UCP-HANDLER.md). Off by default so the existing /buy behavior is
+   * unaffected; requires mandateVerifier (the handler is HAM-secured only).
+   */
+  ucp?: { enabled: boolean; handlerSpecUrl?: string };
 }
 
 const ORDER_HEADER = "idempotency-key";
@@ -204,6 +212,30 @@ export function createMerchantApp(
       },
     });
   });
+
+  // --- UCP-shaped payment_handler responder (opt-in, HAM-secured only) ---
+  // options.ucp overrides UCP_MERCHANT_ENABLED (tests force it on regardless
+  // of env; the standalone `npm run merchant` process is env-driven).
+  const ucpEnabled = options.ucp?.enabled ?? config.ucpEnabled;
+  if (ucpEnabled) {
+    if (!options.mandateVerifier) {
+      throw new Error("options.ucp.enabled requires options.mandateVerifier — the handler is HAM-secured only");
+    }
+    const handlerSpecUrl = options.ucp?.handlerSpecUrl ?? "https://example.com/docs/UCP-HANDLER.md";
+    app.get("/.well-known/ucp", ucpProfileHandler({ handlerSpecUrl }));
+    app.use(
+      "/ucp",
+      createUcpCheckoutRouter({
+        orders,
+        ledger,
+        mandateVerifier: options.mandateVerifier,
+        ...(options.revocation ? { revocation: options.revocation } : {}),
+        resourceServer,
+        config,
+        handlerSpecUrl,
+      }),
+    );
+  }
 
   return { app, orders, config };
 }

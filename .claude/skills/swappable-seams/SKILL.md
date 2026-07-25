@@ -29,6 +29,7 @@ Existing seams (copy their shape):
 | Revocation | `RevocationChecker` (`identity/src/revocation.ts`) | `httpRevocationChecker` (fail-closed) | `RevocationRegistry` |
 | Demo sessions | `SessionStore` (`apps/wallet-demo/server/session-store.ts`) | `FileSessionStore` | `InMemorySessionStore` |
 | Live-buyer balance read | `readBalance` option (`agent/src/live/buy.ts`) | on-chain viem `balanceOf` | injected stub (tests) |
+| UCP checkout (buyer) | `UcpCheckoutClient` (`agent/src/live/ucp-checkout.ts`) | same impl, pointed at a real UCP business | same impl, pointed at the in-process mock merchant (no separate mock class — HTTP+JSON is cheap to fake with a real listener) |
 
 Rules:
 - Keep the interface **minimal** — only what callers actually need.

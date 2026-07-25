@@ -10,3 +10,4 @@ export * from "./live/mandate.ts";
 export { issueLiveGrant, type LiveGrantOptions } from "./live/grant.ts";
 export { runLiveBuy, type LiveBuyOptions } from "./live/buy.ts";
 export { discover } from "./live/discover.ts";
+export * from "./live/ucp-checkout.ts";
