@@ -25,9 +25,11 @@
     "live:grant": "tsx packages/agent/src/live/grant.ts",
     "live:buy": "tsx packages/agent/src/live/buy.ts"
   },
+  "dependencies": {
+    "tsx": "^4.19.2"
+  },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },

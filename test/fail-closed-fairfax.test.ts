@@ -51,3 +51,25 @@ describe("Proof Fairfax sandbox pin (server boot guard)", () => {
     expect(cfg.proof.environment).toBe("next");
   });
 });
+
+/**
+ * Deploy regression: a PaaS injects the port to bind as PORT and routes only that
+ * one, so binding anything else makes the service unreachable behind the router.
+ */
+describe("orchestrator port resolution", () => {
+  it("prefers the platform-injected PORT over DEMO_PORT", () => {
+    expect(resolveDemoConfig({ ...base, PORT: "10000", DEMO_PORT: "4040" }).demoPort).toBe(10_000);
+  });
+
+  it("falls back to DEMO_PORT off-platform, then to 4040", () => {
+    expect(resolveDemoConfig({ ...base, DEMO_PORT: "4040" }).demoPort).toBe(4040);
+    expect(resolveDemoConfig({ ...base }).demoPort).toBe(4040);
+  });
+
+  it("treats an empty PORT as unset (never binds port 0)", () => {
+    // A platform exporting PORT="" would otherwise give Number("") === 0 — an
+    // ephemeral port the router cannot reach, and a health check that never passes.
+    expect(resolveDemoConfig({ ...base, PORT: "", DEMO_PORT: "4040" }).demoPort).toBe(4040);
+    expect(resolveDemoConfig({ ...base, PORT: "" }).demoPort).toBe(4040);
+  });
+});

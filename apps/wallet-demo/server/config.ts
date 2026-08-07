@@ -82,10 +82,19 @@ const DEV_ENCRYPTOR_KEY = "dev-only-x401-encryptor-key-change-me";
 const FAIRFAX_ENVIRONMENT = "sandbox"; // => api.fairfax.proof.com
 const FAIRFAX_TRUST_ROOT = "development";
 
+/** First value that is neither undefined nor empty — treats `FOO=` as unset. */
+const firstSet = (...values: (string | undefined)[]): string | undefined =>
+  values.find((v) => v !== undefined && v !== "");
+
 export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoConfig {
   const mode = env.PROOF_MODE === "live" ? "live" : "local";
   const exposed = env.NODE_ENV === "production" || env.DEMO_REQUIRE_AUTH === "true";
-  const demoPort = Number(env.DEMO_PORT ?? 4040);
+  // PaaS platforms (Render, Fly, Heroku) inject the port to bind as PORT and route
+  // only that one — so it takes precedence over the repo's own DEMO_PORT knob,
+  // which stays the local-dev default. Empty strings count as unset: a platform
+  // that exports PORT="" would otherwise resolve to Number("") === 0 and bind an
+  // ephemeral port the router can't reach.
+  const demoPort = Number(firstSet(env.PORT, env.DEMO_PORT) ?? 4040);
 
   // Fail-closed resolutions — these THROW before any server boots.
   const encryptorKey = (() => {

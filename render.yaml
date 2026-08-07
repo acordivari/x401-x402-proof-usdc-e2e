@@ -1,0 +1,72 @@
+# Render blueprint for the wallet-demo orchestrator (apps/wallet-demo).
+#
+# One web service: it builds the Svelte SPA and then serves it from the same
+# Express process that hosts the API, so the browser only ever sees one origin —
+# no CORS, and the SameSite=Lax session cookie keeps working. Put a CDN in front
+# of this (e.g. a Netlify 200-rewrite of /api/* and /proof/*) only if you keep
+# that single-origin property; a split origin would need SameSite=None cookies.
+#
+# BUILD COMMAND, the non-obvious part: NODE_ENV=production below is what puts the
+# orchestrator in its "exposed" posture (fail-closed secrets + Secure cookies +
+# no Express stack traces in error responses). But npm ALSO reads NODE_ENV and
+# would skip devDependencies — which is where vite lives — so `npm run build:web`
+# would fail. `--include=dev` overrides that for the build. The runtime is fine
+# either way: tsx is a real dependency, since nothing here is precompiled.
+services:
+  - type: web
+    name: agentic-payments-demo
+    runtime: node
+    # `free` spins down after ~15 min idle and cold-starts in ~50s. That is fine
+    # for a link you share directly, but it exceeds a Netlify proxy's ~26s
+    # timeout — move to `starter` if you front this with a CDN rewrite.
+    plan: free
+    branch: main
+    buildCommand: npm ci --include=dev && npm run build:web
+    startCommand: npm run demo:server
+    # Cheap and unauthenticated by design: reports {authRequired, authed} only.
+    healthCheckPath: /api/me
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+
+      # --- posture: exposed => fail closed on every secret below ---
+      - key: NODE_ENV
+        value: production
+
+      # --- required secrets. generateValue mints a strong value once, at service
+      #     creation; read DEMO_AUTH_TOKEN from the Render dashboard to log in. ---
+      - key: DEMO_AUTH_TOKEN # shared access token; POST /api/login {token}
+        generateValue: true
+      - key: DEMO_SESSION_SECRET # signs the session cookie; stable => sessions survive redeploys
+        generateValue: true
+      - key: X401_ENCRYPTOR_KEY # authenticates the challenge state sealing the payment binding
+        generateValue: true
+
+      # --- the in-process merchant. 0 = ephemeral loopback port; Render routes
+      #     only $PORT publicly, so the merchant stays internal either way. ---
+      - key: MERCHANT_PORT
+        value: "0"
+
+      # --- Proof VC layer, pinned to the Fairfax sandbox. The orchestrator
+      #     REFUSES TO BOOT if these drift off sandbox/development (see
+      #     apps/wallet-demo/server/config.ts). Stated explicitly here rather
+      #     than left to defaults so the pin is visible in the deploy config. ---
+      - key: PROOF_ENVIRONMENT
+        value: sandbox # => api.fairfax.proof.com
+      - key: PROOF_TRUST_ROOT
+        value: development
+      # `local` runs the fully offline self-issued substrate. Switch to `live`
+      # only once the three PROOF_* values below are filled in.
+      - key: PROOF_MODE
+        value: local
+      - key: PROOF_CLIENT_ID
+        sync: false
+      - key: PROOF_CLIENT_SECRET
+        sync: false
+      # Must be this service's public URL + /proof/callback (or your CDN's), and
+      # must be registered as a redirect URI on the Proof OAuth app.
+      - key: PROOF_REDIRECT_URI
+        sync: false
+
+      # NOTE: DEMO_PORT is deliberately absent — Render injects PORT, which the
+      # config prefers. Setting DEMO_PORT here would bind an unroutable port.
