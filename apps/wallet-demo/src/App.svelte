@@ -156,6 +156,10 @@
       if (me.identity !== "proof") { keys = await ensureHolderKeys(); credential = loadCredential(); }
       refreshOrders();
       logLine("Unlocked.", "ok");
+    } else if (r?.retryAfter) {
+      // Throttled, not wrong: the gate caps attempts per IP, so a CORRECT token
+      // is refused too until the window closes. Say so, or this reads as "invalid".
+      logLine(`Too many attempts — wait ${r.retryAfter}s before trying again.`, "bad");
     } else {
       logLine("Invalid access token.", "bad");
     }

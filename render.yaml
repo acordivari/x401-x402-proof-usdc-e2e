@@ -33,10 +33,19 @@ services:
       - key: NODE_ENV
         value: production
 
-      # --- required secrets. generateValue mints a strong value once, at service
-      #     creation; read DEMO_AUTH_TOKEN from the Render dashboard to log in. ---
+      # --- required secrets, all three fail-closed: the orchestrator refuses to
+      #     boot without them. ---
+      #
+      # DEMO_AUTH_TOKEN is the one YOU have to know — it's the login token typed
+      # into the UI — so it is sync:false (Render prompts for it at blueprint
+      # deploy) rather than generateValue. A generated value would depend on
+      # reading a concealed secret back out of the dashboard, which is not a
+      # documented capability; getting that wrong locks you out of your own demo.
+      # Generate one yourself:  openssl rand -base64 32
       - key: DEMO_AUTH_TOKEN # shared access token; POST /api/login {token}
-        generateValue: true
+        sync: false
+      # These two are server-only — nothing ever needs to read them back, so
+      # letting Render mint them is strictly better than choosing them by hand.
       - key: DEMO_SESSION_SECRET # signs the session cookie; stable => sessions survive redeploys
         generateValue: true
       - key: X401_ENCRYPTOR_KEY # authenticates the challenge state sealing the payment binding
