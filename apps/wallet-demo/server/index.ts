@@ -15,7 +15,7 @@
  *
  * Run: `npm run demo`  (defaults to PROOF_MODE=local, FACILITATOR_MODE=mock).
  */
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -117,6 +117,47 @@ function tokenMatches(provided: string, expected: string): boolean {
   const a = Buffer.from(provided);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// --- Login throttle: a fixed-window per-IP cap on shared-token attempts. The
+//     token is the only credential the gate has, so unthrottled POSTs are an
+//     online brute-force channel. Hand-rolled for the same reason as the cookie
+//     HMAC above — no new dependency. ---
+const LOGIN_WINDOW_MS = 60_000;
+const LOGIN_MAX_ATTEMPTS = 10;
+/** Bound the per-IP map under a distributed flood; entries are 60s-lived anyway. */
+const LOGIN_MAP_PRUNE_AT = 5_000;
+
+// --- Baseline security headers. Hand-rolled (no helmet) to keep the dependency
+//     surface small. CSP notes: the Vite bundle is external JS + CSS, so
+//     `script-src 'self'` covers the SPA — but the Proof callback page carries an
+//     INLINE script, so that one route swaps in a per-response nonce. Inline
+//     STYLE attributes are used throughout the Svelte components, hence
+//     'unsafe-inline' on style-src only (it does not relax script execution). ---
+const CSP_BASE = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "img-src 'self' data:",
+  "style-src 'self' 'unsafe-inline'",
+  "form-action 'self'",
+  // The browser talks to us; the proof-hosted flow reaches Proof by top-level
+  // navigation, not fetch. The Fairfax sandbox host is allowed for the SDK.
+  "connect-src 'self' https://api.fairfax.proof.com",
+];
+
+function securityHeaders(exposed: boolean): RequestHandler {
+  return (_req, res, next) => {
+    res.setHeader("Content-Security-Policy", [...CSP_BASE, "script-src 'self'"].join("; "));
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+    // Only meaningful behind TLS, which is exactly the exposed posture.
+    if (exposed) res.setHeader("Strict-Transport-Security", "max-age=31536000");
+    next();
+  };
 }
 
 interface CatalogProduct {
@@ -344,7 +385,14 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
       if (!sess || !sid) {
         sid = randomUUID();
         sess = newSession();
-        await sessionStore.set(sid, sess);
+        // PERSIST only what is worth persisting. With the gate on, an
+        // unauthenticated caller gets a cookie but NO server-side row — otherwise
+        // every cookie-less request (a flood of them included) would allocate a
+        // session for the full idle TTL, and under the file store rewrite the
+        // entire session file each time. Once /api/login succeeds, the finish
+        // hook below stores it. With the gate off (local dev) newSession() is
+        // already authed, so behavior is unchanged.
+        if (sess.authed) await sessionStore.set(sid, sess);
         const attrs = `HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secureCookie ? "; Secure" : ""}`;
         res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${encodeURIComponent(signSid(sid, sessionSecret))}; ${attrs}`);
       }
@@ -352,7 +400,9 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
       res.locals.sess = sess;
       if (req.method !== "GET") {
         const finalSid = sid;
-        res.on("finish", () => void sessionStore.set(finalSid, sess!));
+        res.on("finish", () => {
+          if (sess!.authed) void sessionStore.set(finalSid, sess!);
+        });
       }
       next();
     })();
@@ -365,8 +415,30 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
     res.status(401).json({ error: "authentication required", authRequired: true });
   };
 
+  // Per-IP login attempt counters (fixed window). Kept per-app so tests and
+  // multiple orchestrators in one process don't share a limiter.
+  const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+  /** @returns seconds to wait when throttled, or 0 when the attempt is allowed. */
+  function loginRetryAfter(ip: string): number {
+    const now = Date.now();
+    if (loginAttempts.size > LOGIN_MAP_PRUNE_AT) {
+      for (const [k, v] of loginAttempts) if (now >= v.resetAt) loginAttempts.delete(k);
+    }
+    const rec = loginAttempts.get(ip);
+    if (!rec || now >= rec.resetAt) {
+      loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+      return 0;
+    }
+    rec.count += 1;
+    return rec.count > LOGIN_MAX_ATTEMPTS ? Math.ceil((rec.resetAt - now) / 1000) : 0;
+  }
+
   // Evict idle sessions to bound memory (unref'd so it never holds the process open).
-  const sweep = setInterval(() => void sessionStore.sweep(SESSION_TTL_MS), Math.min(SESSION_TTL_MS, 600_000));
+  const sweep = setInterval(() => {
+    void sessionStore.sweep(SESSION_TTL_MS);
+    const now = Date.now();
+    for (const [ip, rec] of loginAttempts) if (now >= rec.resetAt) loginAttempts.delete(ip);
+  }, Math.min(SESSION_TTL_MS, 600_000));
   sweep.unref();
 
   const intentSummary = (sess: ClientSession) =>
@@ -404,6 +476,10 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
   }
 
   const app = express();
+  // Render/Netlify terminate TLS in front of us, so the socket address is the
+  // proxy's — trust one hop so req.ip (the login throttle's key) is the client.
+  if (cfg.exposed) app.set("trust proxy", 1);
+  app.use(securityHeaders(cfg.exposed)); // before static, so assets carry them too
   app.use(express.json({ limit: "1mb" }));
   app.use(express.static(publicDir));
   app.use(sessionMiddleware);
@@ -413,6 +489,11 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
   app.post("/api/login", (req, res) => {
     const sess = res.locals.sess as ClientSession;
     if (!authRequired) { sess.authed = true; return res.json({ authed: true }); }
+    const retryAfter = loginRetryAfter(req.ip ?? "unknown");
+    if (retryAfter > 0) {
+      res.setHeader("Retry-After", String(retryAfter));
+      return res.status(429).json({ error: "too many login attempts", retryAfter });
+    }
     const provided = String(req.body?.token ?? "");
     if (authToken && tokenMatches(provided, authToken)) {
       sess.authed = true;
@@ -645,7 +726,7 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
         transactionData: attempt.transactionData,
       });
       sess.lastVerification = verification;
-      console.log(`[demo] verification:`, JSON.stringify(summarizeVerification(verification)));
+      console.log(`[demo] verification:`, JSON.stringify(logSafeVerification(verification, cfg.exposed)));
       if (!verification.result.ok) {
         return res.status(403).json({ error: "presentation rejected", verification: summarizeVerification(verification) });
       }
@@ -682,7 +763,11 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
   // --- live fragment callback: forward the vp_token from the URL fragment ---
   app.get("/proof/callback", (_req, res) => {
     console.log("[demo] /proof/callback hit (browser will POST the vp_token from the fragment)");
-    res.type("html").send(CALLBACK_HTML);
+    // This page is the one place with an inline script, so it gets a per-response
+    // nonce instead of the blanket `script-src 'self'` the rest of the app uses.
+    const nonce = randomBytes(16).toString("base64");
+    res.setHeader("Content-Security-Policy", [...CSP_BASE, `script-src 'nonce-${nonce}'`].join("; "));
+    res.type("html").send(callbackHtml(nonce));
   });
 
   // --- pay via x402 with the issued Intent (the existing payment rail) ---
@@ -809,17 +894,39 @@ function summarizeVerification(v: VerifiedAuthorization) {
 }
 
 /**
+ * Log-safe projection of a verification. The HTTP response keeps the disclosed
+ * claim VALUES — rendering selective disclosure in the UI is the point of the
+ * demo — but an exposed deployment must not write a real person's identity claims
+ * (or the payment mandate they approved) into the platform's retained log stream.
+ * There we log the claim NAMES only.
+ */
+function logSafeVerification(v: VerifiedAuthorization, exposed: boolean) {
+  const summary = summarizeVerification(v);
+  if (!exposed) return summary;
+  const { subject, paymentApproved, ...rest } = summary;
+  return {
+    ...rest,
+    subjectClaims: Object.keys(subject ?? {}), // names only, never values
+    paymentApproved: paymentApproved ? "[redacted]" : undefined,
+  };
+}
+
+/**
  * The page Proof redirects to (fragment mode). It reads the vp_token from the URL
  * fragment and — because it is same-origin — completes the authorization by
  * POSTing it straight to our API. No cross-window handoff (postMessage/opener),
  * which proved unreliable. It then notifies any opener and returns to the app.
+ *
+ * Every status string is written with textContent, never innerHTML: this page's
+ * input arrives in the URL fragment, and server error strings are echoed into it.
+ * The inline script carries a per-response CSP nonce (see the route).
  */
-const CALLBACK_HTML = `<!doctype html><meta charset="utf-8"><title>Proof callback</title>
+const callbackHtml = (nonce: string) => `<!doctype html><meta charset="utf-8"><title>Proof callback</title>
 <body style="font:14px ui-sans-serif,system-ui;background:#0b0f1a;color:#e8eef9;padding:28px">
 <h3 style="margin:0 0 8px">x401 · returning your presentation</h3>
 <p id="out" style="color:#93a3c4">Reading presentation…</p>
 <pre id="dbg" style="color:#5b8cff;white-space:pre-wrap;font-size:12px"></pre>
-<script>
+<script nonce="${nonce}">
 (async () => {
   const out = document.getElementById("out"), dbg = document.getElementById("dbg");
   const params = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
@@ -830,10 +937,10 @@ const CALLBACK_HTML = `<!doctype html><meta charset="utf-8"><title>Proof callbac
     const r = await fetch("/api/authorize/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vpToken }) });
     const j = await r.json();
     if (r.ok && !j.error) {
-      out.innerHTML = "✓ Verified. Identity + payment authorized — returning to the demo…";
+      out.textContent = "✓ Verified. Identity + payment authorized — returning to the demo…";
       dbg.textContent = JSON.stringify(j.verification, null, 2);
     } else {
-      out.innerHTML = "✗ Presentation rejected: " + (j.error || "unknown");
+      out.textContent = "✗ Presentation rejected: " + (j.error || "unknown");
       dbg.textContent = JSON.stringify(j.verification || j, null, 2);
     }
     try { if (window.opener) window.opener.postMessage({ type: "x401:done" }, location.origin); } catch (e) {}

@@ -40,10 +40,10 @@ afterAll(async () => {
   await closeDemo();
 });
 
-function makeClient() {
+function makeClient(at = () => base) {
   let cookie = "";
   return async (path: string, body?: unknown) => {
-    const res = await fetch(`${base}${path}`, {
+    const res = await fetch(`${at()}${path}`, {
       method: body !== undefined ? "POST" : "GET",
       headers: {
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
@@ -52,8 +52,14 @@ function makeClient() {
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     const setCookie = res.headers.get("set-cookie");
+    const reissued = Boolean(setCookie);
     if (setCookie) cookie = setCookie.split(";")[0];
-    return { status: res.status, body: (await res.json().catch(() => ({}))) as any };
+    return {
+      status: res.status,
+      headers: res.headers,
+      reissued,
+      body: (await res.json().catch(() => ({}))) as any,
+    };
   };
 }
 
@@ -93,6 +99,44 @@ describe("orchestrator access gate (F1)", () => {
     expect((await api("/api/flow", { flow: "self-issued" })).status).toBe(200);
   });
 
+  it("does not allocate server-side state for unauthenticated callers", async () => {
+    // An unauthed caller gets a cookie but NO stored session, so each request is
+    // a fresh mint (observable as a re-issued cookie every time). This is what
+    // stops a cookie-less flood from filling the session store — and, under the
+    // file store, rewriting the whole session file per request.
+    const api = makeClient();
+    expect((await api("/api/me")).reissued).toBe(true);
+    expect((await api("/api/me")).reissued).toBe(true);
+    expect((await api("/api/me")).reissued).toBe(true);
+
+    // Once authenticated the session IS stored, so the cookie stops churning.
+    expect((await api("/api/login", { token: TOKEN })).status).toBe(200);
+    const after = await api("/api/me");
+    expect(after.reissued).toBe(false);
+    expect(after.body.authed).toBe(true);
+  });
+
+  it("serves baseline security headers", async () => {
+    const api = makeClient();
+    const { headers } = await api("/api/me");
+    const csp = headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("script-src 'self'");
+    expect(headers.get("x-content-type-options")).toBe("nosniff");
+    expect(headers.get("x-frame-options")).toBe("DENY");
+    expect(headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
+  it("serves the Proof callback under a nonce CSP matching its inline script", async () => {
+    const res = await fetch(`${base}/proof/callback`);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    const nonce = /script-src 'nonce-([^']+)'/.exec(csp)?.[1];
+    expect(nonce).toBeTruthy();
+    // The inline script must carry the SAME nonce, or the page is inert.
+    expect(await res.text()).toContain(`<script nonce="${nonce}">`);
+  });
+
   it("fails closed: refuses to boot exposed with no token", async () => {
     const saved = process.env.DEMO_AUTH_TOKEN;
     delete process.env.DEMO_AUTH_TOKEN;
@@ -103,5 +147,51 @@ describe("orchestrator access gate (F1)", () => {
       process.env.DEMO_AUTH_TOKEN = saved;
       delete process.env.DEMO_REQUIRE_AUTH;
     }
+  });
+});
+
+/**
+ * The shared token is the gate's only credential, so unthrottled /api/login is an
+ * online brute-force channel. Booted as its OWN orchestrator so the per-app
+ * attempt counter starts clean and can't be perturbed by the tests above.
+ */
+describe("login throttle", () => {
+  let throttleBase: string;
+  let server: Server;
+  let close: () => Promise<void>;
+
+  beforeAll(async () => {
+    const demo = await createDemoApp();
+    close = demo.close;
+    server = await new Promise<Server>((resolve) => {
+      const s = demo.app.listen(0, () => resolve(s));
+    });
+    throttleBase = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((r) => server.close(() => r()));
+    await close();
+  });
+
+  it("rejects with 429 + Retry-After once the per-IP window is exhausted", async () => {
+    const api = makeClient(() => throttleBase);
+    const statuses: number[] = [];
+    let retryAfter: string | null = null;
+    for (let i = 0; i < 15; i += 1) {
+      const r = await api("/api/login", { token: "wrong" });
+      statuses.push(r.status);
+      retryAfter ??= r.status === 429 ? r.headers.get("retry-after") : null;
+    }
+    expect(statuses[0]).toBe(401); // early attempts are judged on the token
+    expect(statuses).toContain(429); // the window closes before 15 guesses land
+    expect(statuses.at(-1)).toBe(429); // and stays closed
+    expect(Number(retryAfter)).toBeGreaterThan(0);
+  });
+
+  it("keeps the throttle on even for the CORRECT token once tripped", async () => {
+    const api = makeClient(() => throttleBase);
+    // Same IP as the loop above, whose window is still open.
+    expect((await api("/api/login", { token: TOKEN })).status).toBe(429);
   });
 });

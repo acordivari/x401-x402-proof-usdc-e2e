@@ -74,6 +74,14 @@ export interface DemoConfig {
 // forgeable — so live/production refuses to boot with it.
 const DEV_ENCRYPTOR_KEY = "dev-only-x401-encryptor-key-change-me";
 
+// The Proof VC layer is deliberately pinned to Proof's FAIRFAX SANDBOX. The pin is
+// enforced whenever the real Proof network is reachable (PROOF_MODE=live) and on any
+// exposed deployment — the latter so a later PROOF_MODE flip on a public instance
+// can't escape it. Same fail-closed shape as the encryptor key: throw before a
+// listener binds rather than silently talking to production Proof.
+const FAIRFAX_ENVIRONMENT = "sandbox"; // => api.fairfax.proof.com
+const FAIRFAX_TRUST_ROOT = "development";
+
 export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoConfig {
   const mode = env.PROOF_MODE === "live" ? "live" : "local";
   const exposed = env.NODE_ENV === "production" || env.DEMO_REQUIRE_AUTH === "true";
@@ -116,6 +124,18 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
     }
     return randomUUID(); // ephemeral: sessions simply don't survive a restart in local dev
   })();
+  // Fairfax pin. Resolved AFTER the checks above so the encryptor/token/secret
+  // errors keep their precedence when more than one thing is misconfigured.
+  const proofEnvironment = env.PROOF_ENVIRONMENT ?? FAIRFAX_ENVIRONMENT;
+  const proofTrustRoot = env.PROOF_TRUST_ROOT === "production" ? "production" : "development";
+  if ((mode === "live" || exposed) &&
+      (proofEnvironment !== FAIRFAX_ENVIRONMENT || proofTrustRoot !== FAIRFAX_TRUST_ROOT)) {
+    throw new Error(
+      `Proof is pinned to the Fairfax sandbox: PROOF_ENVIRONMENT must be "${FAIRFAX_ENVIRONMENT}" and ` +
+        `PROOF_TRUST_ROOT "${FAIRFAX_TRUST_ROOT}" (got "${proofEnvironment}" / "${proofTrustRoot}"). ` +
+        "Refusing to boot pointed at a non-sandbox Proof environment.",
+    );
+  }
 
   return {
     merchantPayTo: (env.MERCHANT_PAY_TO ?? "0xc0ffee0000000000000000000000000000000000").toLowerCase() as `0x${string}`,
@@ -144,8 +164,8 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
     sessionSecret,
     encryptorKey,
     proof: {
-      trustRoot: env.PROOF_TRUST_ROOT === "production" ? "production" : "development",
-      environment: env.PROOF_ENVIRONMENT ?? "sandbox",
+      trustRoot: proofTrustRoot,
+      environment: proofEnvironment,
       responseMode: env.PROOF_RESPONSE_MODE === "direct_post" ? "direct_post" : "fragment",
       ...(env.PROOF_CLIENT_ID ? { clientId: env.PROOF_CLIENT_ID } : {}),
       ...(env.PROOF_CLIENT_SECRET ? { clientSecret: env.PROOF_CLIENT_SECRET } : {}),
