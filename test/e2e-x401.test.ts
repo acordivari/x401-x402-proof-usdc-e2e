@@ -84,7 +84,7 @@ async function newWallet(persona = "andrew@example.com"): Promise<LocalWallet> {
   const holder = await generateEs256Keys();
   const wallet = new LocalWallet(holder.privateJwk, holder.publicJwk);
   const claims = persona === "andrew@example.com"
-    ? { given_name: "Andrew", family_name: "Cordivari", birth_date: "1990-04-12", email: "andrew@example.com", age_over_21: true }
+    ? { given_name: "Andrew", family_name: "Smith", birth_date: "1990-04-12", email: "andrew@example.com", age_over_21: true }
     : { given_name: "Sam", family_name: "Rivera", birth_date: "2006-09-30", email: "sam@example.com", age_over_21: false };
   const compact = await issuer.issue(claims, wallet.publicJwk);
   wallet.store({ id: PROOF_CREDENTIAL_ID, compact, claimNames: [...PROOF_ID_CLAIM_KEYS] });

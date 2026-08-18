@@ -33,7 +33,7 @@ process.env.PROOF_CLIENT_ID = ""; // proofLiveReady = false
 process.env.PROOF_CLIENT_SECRET = "";
 
 const PERSONA = {
-  given_name: "Andrew", family_name: "Cordivari", birth_date: "1990-04-12",
+  given_name: "Andrew", family_name: "Smith", birth_date: "1990-04-12",
   email: "andrew@example.com", age_over_21: true,
 };
 

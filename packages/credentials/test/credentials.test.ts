@@ -138,7 +138,7 @@ describe("verifyAuthorization (x401 challenge + VC + payment binding)", () => {
     expect(v.proof?.nonceBound).toBe(true);
     expect(v.proof?.holderBound).toBe(true);
     expect(v.proof?.issuer).toBe(ISSUER_ID);
-    expect(v.proof?.subject).toEqual({ given_name: "Andrew", family_name: "Cordivari", age_over_21: true });
+    expect(v.proof?.subject).toEqual({ given_name: "Andrew", family_name: "Smith", age_over_21: true });
   });
 
   it("rejects when the payment is tampered (transaction_data binding broken)", async () => {

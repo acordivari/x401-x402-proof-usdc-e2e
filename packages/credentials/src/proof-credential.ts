@@ -56,7 +56,7 @@ export function proofIdDisclosureFrame(claims: ProofIdClaims): { _sd: (keyof Pro
 export const DEMO_HOLDERS: Record<string, ProofIdClaims> = {
   "andrew@example.com": {
     given_name: "Andrew",
-    family_name: "Cordivari",
+    family_name: "Smith",
     birth_date: "1990-04-12",
     email: "andrew@example.com",
     document_number: "P1234567",
