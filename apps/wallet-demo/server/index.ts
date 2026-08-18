@@ -125,7 +125,16 @@ function tokenMatches(provided: string, expected: string): boolean {
 //     HMAC above — no new dependency. ---
 const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_MAX_ATTEMPTS = 10;
-/** Bound the per-IP map under a distributed flood; entries are 60s-lived anyway. */
+/**
+ * The PUBLISHED token (DEMO_PUBLIC_TOKEN) gets its own, much looser bucket. The
+ * strict cap above exists to make guessing a SECRET expensive; a token printed
+ * on the login screen is not guessed, and counting its uses would only punish
+ * honest visitors sharing one NAT/conference IP. It is still capped, because
+ * each success mints a stored session — this bounds that as a memory-growth
+ * channel without ever getting in a human's way.
+ */
+const PUBLIC_LOGIN_MAX_ATTEMPTS = 60;
+/** Bound the per-IP maps under a distributed flood; entries are 60s-lived anyway. */
 const LOGIN_MAP_PRUNE_AT = 5_000;
 
 // --- Baseline security headers. Hand-rolled (no helmet) to keep the dependency
@@ -265,6 +274,7 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
   });
 
   const authToken = cfg.authToken; // undefined => gate disabled (local)
+  const publicToken = cfg.publicToken; // undefined => nothing is published
   const sessionSecret = cfg.sessionSecret;
   const authRequired = Boolean(authToken);
   const issuerKeys = await generateEs256Keys();
@@ -418,26 +428,34 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
   // Per-IP login attempt counters (fixed window). Kept per-app so tests and
   // multiple orchestrators in one process don't share a limiter.
   const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+  /** Separate window for published-token logins, so the two never share a budget. */
+  const publicLoginAttempts = new Map<string, { count: number; resetAt: number }>();
   /** @returns seconds to wait when throttled, or 0 when the attempt is allowed. */
-  function loginRetryAfter(ip: string): number {
+  function retryAfterFor(
+    bucket: Map<string, { count: number; resetAt: number }>,
+    ip: string,
+    max: number,
+  ): number {
     const now = Date.now();
-    if (loginAttempts.size > LOGIN_MAP_PRUNE_AT) {
-      for (const [k, v] of loginAttempts) if (now >= v.resetAt) loginAttempts.delete(k);
+    if (bucket.size > LOGIN_MAP_PRUNE_AT) {
+      for (const [k, v] of bucket) if (now >= v.resetAt) bucket.delete(k);
     }
-    const rec = loginAttempts.get(ip);
+    const rec = bucket.get(ip);
     if (!rec || now >= rec.resetAt) {
-      loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+      bucket.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
       return 0;
     }
     rec.count += 1;
-    return rec.count > LOGIN_MAX_ATTEMPTS ? Math.ceil((rec.resetAt - now) / 1000) : 0;
+    return rec.count > max ? Math.ceil((rec.resetAt - now) / 1000) : 0;
   }
+  const loginRetryAfter = (ip: string) => retryAfterFor(loginAttempts, ip, LOGIN_MAX_ATTEMPTS);
 
   // Evict idle sessions to bound memory (unref'd so it never holds the process open).
   const sweep = setInterval(() => {
     void sessionStore.sweep(SESSION_TTL_MS);
     const now = Date.now();
     for (const [ip, rec] of loginAttempts) if (now >= rec.resetAt) loginAttempts.delete(ip);
+    for (const [ip, rec] of publicLoginAttempts) if (now >= rec.resetAt) publicLoginAttempts.delete(ip);
   }, Math.min(SESSION_TTL_MS, 600_000));
   sweep.unref();
 
@@ -489,7 +507,20 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
   app.post("/api/login", (req, res) => {
     const sess = res.locals.sess as ClientSession;
     if (!authRequired) { sess.authed = true; return res.json({ authed: true }); }
-    const retryAfter = loginRetryAfter(req.ip ?? "unknown");
+    const ip = req.ip ?? "unknown";
+    // The published token is checked FIRST, against its own budget: it carries no
+    // secrecy for the brute-force counter to protect, so spending the private
+    // token's 10-per-minute window on it would lock out honest visitors.
+    if (publicToken && tokenMatches(String(req.body?.token ?? ""), publicToken)) {
+      const publicRetryAfter = retryAfterFor(publicLoginAttempts, ip, PUBLIC_LOGIN_MAX_ATTEMPTS);
+      if (publicRetryAfter > 0) {
+        res.setHeader("Retry-After", String(publicRetryAfter));
+        return res.status(429).json({ error: "too many login attempts", retryAfter: publicRetryAfter });
+      }
+      sess.authed = true;
+      return res.json({ authed: true });
+    }
+    const retryAfter = loginRetryAfter(ip);
     if (retryAfter > 0) {
       res.setHeader("Retry-After", String(retryAfter));
       return res.status(429).json({ error: "too many login attempts", retryAfter });
@@ -505,7 +536,9 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
   app.get("/api/me", (_req, res) => {
     const sess = res.locals.sess as ClientSession;
     if (authRequired && !sess.authed) {
-      return res.json({ authRequired: true, authed: false });
+      // The ONLY field served pre-auth besides the gate's status: the published
+      // token, so the login screen can show it and hand out a `#token=` link.
+      return res.json({ authRequired: true, authed: false, ...(publicToken ? { publicToken } : {}) });
     }
     res.json({
       authRequired,

@@ -106,6 +106,11 @@
 
   onMount(async () => {
     await refreshMe();
+    await tryLinkUnlock();
+    // Pasting the link while ALREADY on the gate only changes the fragment — a
+    // same-document navigation, so onMount never runs again. Listen for it, or
+    // the link silently does nothing for anyone who already has the page open.
+    window.addEventListener("hashchange", () => void tryLinkUnlock());
     const cat = await api("/api/catalog");
     catalog = cat.products ?? [];
     selectedSku = catalog[0]?.sku ?? "";
@@ -145,8 +150,43 @@
     requested = requested.includes(c) ? requested.filter((x) => x !== c) : [...requested, c];
   }
 
+  // Clipboard needs a secure context (https, or localhost in dev). When it is
+  // unavailable the token is still on screen as selectable text, so the gate
+  // degrades to plain copy/paste rather than breaking.
+  let copied = $state("");
+  const unlockLink = $derived(
+    me.publicToken ? `${location.origin}${location.pathname}#token=${encodeURIComponent(me.publicToken)}` : "",
+  );
+  async function copyUnlock(what: "token" | "link") {
+    try {
+      await navigator.clipboard.writeText(what === "link" ? unlockLink : me.publicToken);
+      copied = what;
+      setTimeout(() => (copied = ""), 1500);
+    } catch {
+      logLine("Clipboard unavailable — select the token above and copy it manually.", "bad");
+    }
+  }
+
+  /**
+   * Shareable unlock link: `#token=…` submits the published demo token so a URL
+   * can be handed out without asking anyone to retype it. A FRAGMENT, not a query
+   * param, on purpose — it never reaches the server, a proxy log, or a Referer
+   * header. It is stripped once spent so it can't linger in the address bar
+   * through a screen share.
+   */
+  async function tryLinkUnlock() {
+    const linkToken = new URLSearchParams(location.hash.slice(1)).get("token");
+    if (!linkToken || !needsLogin) return;
+    token = linkToken;
+    history.replaceState(null, "", location.pathname);
+    await login();
+  }
+
   async function login() {
-    const r = await api("/api/login", { token });
+    // Trim before sending: the server compares byte-exact, and a token people are
+    // meant to COPY arrives with a trailing newline or space often enough that
+    // "Invalid access token" would usually be a paste artifact, not a wrong token.
+    const r = await api("/api/login", { token: token.trim() });
     if (r?.authed) {
       token = "";
       await refreshMe();
@@ -320,6 +360,27 @@
         style="width:100%;margin:10px 0;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:9px"
       />
       <button onclick={login} disabled={!token.trim()}>Unlock</button>
+
+      {#if me.publicToken}
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+          <p class="note" style="margin:0 0 8px">
+            Public demo — testnet only. Settlement is mocked and the agent wallet is a
+            throwaway key, so nothing here can move real funds.
+          </p>
+          <code
+            class="mono"
+            style="display:block;user-select:all;background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:8px;word-break:break-all;font-size:13px"
+          >{me.publicToken}</code>
+          <div class="row" style="margin-top:8px;gap:8px">
+            <button class="ghost" onclick={() => copyUnlock("token")}>
+              {copied === "token" ? "Copied ✓" : "Copy token"}
+            </button>
+            <button class="ghost" onclick={() => copyUnlock("link")}>
+              {copied === "link" ? "Copied ✓" : "Copy unlock link"}
+            </button>
+          </div>
+        </div>
+      {/if}
     </div>
   </div>
 {:else}

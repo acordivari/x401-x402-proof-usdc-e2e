@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 
 const TOKEN = "s3cret-demo-token";
+const PUBLIC_TOKEN = "published-demo-token";
 
 // Configure BEFORE importing the module (per-file env, like fail-closed-encryptor).
 process.env.PROOF_MODE = "local";
@@ -18,6 +19,7 @@ process.env.MERCHANT_PORT = "0";
 process.env.PROOF_CLIENT_ID = "";
 process.env.PROOF_CLIENT_SECRET = "";
 process.env.DEMO_AUTH_TOKEN = TOKEN;
+process.env.DEMO_PUBLIC_TOKEN = PUBLIC_TOKEN;
 process.env.DEMO_SESSION_SECRET = "test-session-secret";
 
 let base: string;
@@ -71,6 +73,10 @@ describe("orchestrator access gate (F1)", () => {
     expect(me.body.authed).toBe(false);
     expect(me.body.intent).toBeUndefined();
     expect(me.body.flow).toBeUndefined(); // no state leak pre-auth
+    // The published token is the ONE thing served pre-auth beyond gate status —
+    // the login screen renders it. The private token must never appear here.
+    expect(me.body.publicToken).toBe(PUBLIC_TOKEN);
+    expect(JSON.stringify(me.body)).not.toContain(TOKEN);
   });
 
   it("rejects a protected endpoint without authentication (401)", async () => {
@@ -143,6 +149,87 @@ describe("orchestrator access gate (F1)", () => {
     process.env.DEMO_REQUIRE_AUTH = "true";
     try {
       await expect(createDemoApp()).rejects.toThrow(/DEMO_AUTH_TOKEN/);
+    } finally {
+      process.env.DEMO_AUTH_TOKEN = saved;
+      delete process.env.DEMO_REQUIRE_AUTH;
+    }
+  });
+});
+
+/**
+ * F1(B) — the PUBLISHED token (DEMO_PUBLIC_TOKEN). It unlocks the same session as
+ * the private token so a visitor can start the demo from a shared link, but it is
+ * a distinct credential: it is the only one surfaced pre-auth, and it draws on its
+ * own throttle budget so honest visitors behind one IP don't lock each other out.
+ */
+describe("published demo token (F1B)", () => {
+  it("unlocks a session just like the private token", async () => {
+    const api = makeClient();
+    const login = await api("/api/login", { token: PUBLIC_TOKEN });
+    expect(login.status).toBe(200);
+    expect(login.body.authed).toBe(true);
+    const me = await api("/api/me");
+    expect(me.body.authed).toBe(true);
+    expect(me.body.flow).toBe("delegated");
+    expect((await api("/api/flow", { flow: "self-issued" })).status).toBe(200);
+  });
+
+  it("stops publishing the token once the caller is authenticated", async () => {
+    const api = makeClient();
+    await api("/api/login", { token: PUBLIC_TOKEN });
+    expect((await api("/api/me")).body.publicToken).toBeUndefined();
+  });
+
+  it("does not spend the private token's brute-force budget", async () => {
+    // Its own orchestrator, so the per-app counters start clean.
+    const demo = await createDemoApp();
+    const server = await new Promise<Server>((resolve) => {
+      const s = demo.app.listen(0, () => resolve(s));
+    });
+    const at = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const api = makeClient(() => at);
+      // Well past LOGIN_MAX_ATTEMPTS (10) — a shared conference IP looks like this.
+      for (let i = 0; i < 15; i += 1) {
+        expect((await api("/api/login", { token: PUBLIC_TOKEN })).status).toBe(200);
+      }
+      // ...and the private token's window is untouched by all of that.
+      expect((await makeClient(() => at)("/api/login", { token: TOKEN })).status).toBe(200);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+      await demo.close();
+    }
+  });
+
+  it("fails closed: refuses to boot when it equals the private token", async () => {
+    process.env.DEMO_PUBLIC_TOKEN = TOKEN;
+    try {
+      await expect(createDemoApp()).rejects.toThrow(/must differ from DEMO_AUTH_TOKEN/);
+    } finally {
+      process.env.DEMO_PUBLIC_TOKEN = PUBLIC_TOKEN;
+    }
+  });
+
+  it("fails closed: refuses to boot alongside PROOF_MODE=live", async () => {
+    // A published token plus live Proof credentials = any visitor spending them.
+    // The encryptor key is set too: PROOF_MODE=live fails closed on that FIRST,
+    // and this test is about the guard after it.
+    process.env.PROOF_MODE = "live";
+    process.env.X401_ENCRYPTOR_KEY = "a-strong-non-default-encryptor-key";
+    try {
+      await expect(createDemoApp()).rejects.toThrow(/PROOF_MODE=live/);
+    } finally {
+      process.env.PROOF_MODE = "local";
+      delete process.env.X401_ENCRYPTOR_KEY;
+    }
+  });
+
+  it("fails closed: refuses to publish a token with no private token behind it", async () => {
+    const saved = process.env.DEMO_AUTH_TOKEN;
+    delete process.env.DEMO_AUTH_TOKEN;
+    process.env.DEMO_REQUIRE_AUTH = "";
+    try {
+      await expect(createDemoApp()).rejects.toThrow(/DEMO_PUBLIC_TOKEN requires DEMO_AUTH_TOKEN/);
     } finally {
       process.env.DEMO_AUTH_TOKEN = saved;
       delete process.env.DEMO_REQUIRE_AUTH;

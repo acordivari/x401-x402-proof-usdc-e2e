@@ -44,6 +44,17 @@ services:
       # Generate one yourself:  openssl rand -base64 32
       - key: DEMO_AUTH_TOKEN # shared access token; POST /api/login {token}
         sync: false
+      # OPTIONAL, and the one env var here that is meant to be PUBLIC. Set it and
+      # the login screen displays that token with a copy button plus a shareable
+      # `https://<your-service>/#token=...` link, so a visitor can start the demo
+      # without you handing out DEMO_AUTH_TOKEN. Safe here because this service
+      # cannot move value: the agent signer is a throwaway key generated at boot
+      # and the facilitator is hard-wired to "mock". config.ts refuses to boot if
+      # it equals DEMO_AUTH_TOKEN or is combined with PROOF_MODE=live (which would
+      # let any visitor spend your Proof credentials). Delete this entry to take
+      # the demo private again — DEMO_AUTH_TOKEN keeps working untouched.
+      - key: DEMO_PUBLIC_TOKEN
+        sync: false
       # These two are server-only — nothing ever needs to read them back, so
       # letting Render mint them is strictly better than choosing them by hand.
       - key: DEMO_SESSION_SECRET # signs the session cookie; stable => sessions survive redeploys

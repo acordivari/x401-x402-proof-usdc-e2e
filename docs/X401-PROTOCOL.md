@@ -179,8 +179,20 @@ every state/spend endpoint (`POST /api/login`, timing-safe compare); it's **open
 local dev** (no token) and **fails closed** when exposed (`NODE_ENV=production` or
 `DEMO_REQUIRE_AUTH=true` ⇒ refuse to boot without a token + `DEMO_SESSION_SECRET`),
 mirroring the `X401_ENCRYPTOR_KEY` guard. `SameSite=Lax` is the CSRF mitigation.
+For a **public** demo the gate takes a second, deliberately publishable credential,
+`DEMO_PUBLIC_TOKEN`: when set, `GET /api/me` returns it pre-auth (the only field it
+serves beyond gate status), the login screen renders it with a copy button and a
+shareable `<origin>/#token=…` unlock link, and it draws on its own looser throttle
+(60/min/IP vs 10) because a printed token is not one anyone has to guess. The
+fragment carries the token client-side only — never into a query string, proxy log,
+or `Referer`. `DEMO_AUTH_TOKEN` stays private and independently rotatable. This is
+sound only because the orchestrator **cannot move value** — the agent signer is a
+throwaway key generated at boot and the facilitator is hard-wired to `mock` — so
+config **refuses to boot** if the published token equals the private one, stands
+without one, or is combined with `PROOF_MODE=live` (which would let any visitor
+spend the operator's Proof credentials).
 Tests: `test/e2e-demo-server.test.ts` (isolation), `test/e2e-demo-auth.test.ts`
-(gate + fail-closed). Note: the agent wallet is shared infrastructure; isolation of
+(gate + published token + fail-closed). Note: the agent wallet is shared infrastructure; isolation of
 *authority* holds because each session holds only its own `intent`. The in-memory
 session store is single-process (fine for the demo; a real deployment would back it
 with a shared store).

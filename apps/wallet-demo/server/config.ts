@@ -48,6 +48,13 @@ export interface DemoConfig {
   exposed: boolean;
   /** Shared access token; undefined => gate disabled (local dev only). */
   authToken?: string;
+  /**
+   * A SECOND, deliberately publishable token. When set, the gate screen renders
+   * it (with a copy button and a `#token=` unlock link) so anyone handed the URL
+   * can start the demo, while `authToken` stays private. Undefined => the gate
+   * shows nothing and behaves exactly as it did before this existed.
+   */
+  publicToken?: string;
   /** Signs the session cookie. Random per-boot locally; required when exposed. */
   sessionSecret: string;
   /** Authenticates the x401 challenge state that seals the payment binding. */
@@ -133,6 +140,36 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
     }
     return randomUUID(); // ephemeral: sessions simply don't survive a restart in local dev
   })();
+  // The publishable half of the gate. Displaying a token is only defensible
+  // because this orchestrator cannot move value: the agent signer is a freshly
+  // generated throwaway key and the facilitator is hard-wired to "mock" (see
+  // server/index.ts), so an unlocked session buys mock inventory with mock
+  // settlement. The three guards below keep it that way.
+  const publicToken = (() => {
+    const pub = env.DEMO_PUBLIC_TOKEN;
+    if (!pub) return undefined;
+    if (!authToken) {
+      throw new Error(
+        "DEMO_PUBLIC_TOKEN requires DEMO_AUTH_TOKEN — the published token is the second " +
+          "credential of the gate, not a replacement for the private one.",
+      );
+    }
+    if (pub === authToken) {
+      throw new Error(
+        "DEMO_PUBLIC_TOKEN must differ from DEMO_AUTH_TOKEN — they are the same string, so " +
+          "publishing one publishes your own credential and you could not rotate it independently.",
+      );
+    }
+    if (mode === "live") {
+      throw new Error(
+        "DEMO_PUBLIC_TOKEN cannot be combined with PROOF_MODE=live — a published token lets any " +
+          "visitor spend the org's Proof credentials and start real verification sessions. " +
+          "Unset DEMO_PUBLIC_TOKEN, or run the public demo on PROOF_MODE=local.",
+      );
+    }
+    return pub;
+  })();
+
   // Fairfax pin. Resolved AFTER the checks above so the encryptor/token/secret
   // errors keep their precedence when more than one thing is misconfigured.
   const proofEnvironment = env.PROOF_ENVIRONMENT ?? FAIRFAX_ENVIRONMENT;
@@ -170,6 +207,7 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
     sessionTtlMs: Number(env.DEMO_SESSION_TTL_MS ?? 3_600_000), // 1h idle
     exposed,
     ...(authToken !== undefined ? { authToken } : {}),
+    ...(publicToken !== undefined ? { publicToken } : {}),
     sessionSecret,
     encryptorKey,
     proof: {
