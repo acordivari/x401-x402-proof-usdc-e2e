@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "check:x401": "node scripts/check-x401-spec.mjs",
+    "record:proof": "tsx apps/wallet-demo/server/record-exhibit.ts",
     "merchant": "tsx packages/merchant/src/server.ts",
     "agent": "tsx packages/agent/src/buyer.ts",
     "demo": "npm run build:web && npm run demo:server",

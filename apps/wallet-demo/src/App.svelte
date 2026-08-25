@@ -4,6 +4,7 @@
   import FlowViz from "./lib/FlowViz.svelte";
   import PaymentAuthCard from "./lib/PaymentAuthCard.svelte";
   import MerchantPanel from "./lib/MerchantPanel.svelte";
+  import ProofExhibit from "./lib/ProofExhibit.svelte";
   import {
     ensureHolderKeys,
     presentInBrowser,
@@ -48,6 +49,9 @@
   let token = $state("");
   let budgetUsd = $state("5.00");
   let agentRun = $state<any>(undefined);
+  // The recorded real-Proof exhibit. Absent on a deployment with no recording,
+  // in which case the card simply does not render.
+  let exhibit = $state<any>(undefined);
 
   // Proof's official web component (@proof.com/proof-vc-web). We feed it our
   // server-built (PAR) authorize URL via `resolveAuthorizationUrl` so the client
@@ -113,6 +117,7 @@
     window.addEventListener("hashchange", () => void tryLinkUnlock());
     const cat = await api("/api/catalog");
     catalog = cat.products ?? [];
+    exhibit = await api("/api/proof/exhibit");
     selectedSku = catalog[0]?.sku ?? "";
     if (me.identity !== "proof") {
       keys = await ensureHolderKeys();
@@ -564,6 +569,7 @@
         <FlowViz {steps} />
       </div>
       <MerchantPanel {orders} {intent} {verification} />
+      <ProofExhibit {exhibit} />
     </div>
   </div>
 </div>

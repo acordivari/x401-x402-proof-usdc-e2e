@@ -13,3 +13,8 @@ coverage/
 # live-buyer durable spend journal (per-machine state, never commit)
 .live-spend.json
 .live-mandate.json
+
+# recorded Proof presentation for the public demo's exhibit — a real, signed
+# credential artifact about a real person. Supply it to a deployment as a secret
+# file; never commit it.
+.proof-recording.json

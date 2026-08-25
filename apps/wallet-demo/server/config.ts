@@ -8,6 +8,11 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { PROOF_EXHIBIT_FILE } from "./exhibit.ts";
+
+/** Repo root, so defaults resolve the same however the workspace is invoked. */
+const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
 // --- the three selectable wallet workflows ---
 //   self-issued : browser-held local SD-JWT-VC, per-purchase consent (offline)
@@ -40,6 +45,11 @@ export interface DemoConfig {
   /** Spend-cap ledger: "local" = merchant-private in-memory; "http" = central durable service. */
   ledgerMode: "local" | "http";
   ledgerFile: string;
+  /**
+   * Recorded Proof presentation the read-only exhibit re-verifies. Absent file
+   * => the exhibit is simply unavailable; everything else still runs offline.
+   */
+  exhibitFile: string;
   /** Session store seam: "memory" (drop on restart) or durable "file". */
   sessionStore: "memory" | "file";
   sessionFile: string;
@@ -202,6 +212,7 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
       : {}),
     ledgerMode: env.LEDGER_MODE === "http" ? "http" : "local",
     ledgerFile: env.LEDGER_FILE ?? path.join(os.tmpdir(), "agentic-payments-spend-ledger.json"),
+    exhibitFile: env.PROOF_EXHIBIT_FILE ?? path.resolve(REPO_ROOT, PROOF_EXHIBIT_FILE),
     sessionStore: env.SESSION_STORE === "file" ? "file" : "memory",
     sessionFile: env.SESSION_FILE ?? path.join(os.tmpdir(), "agentic-payments-sessions.json"),
     sessionTtlMs: Number(env.DEMO_SESSION_TTL_MS ?? 3_600_000), // 1h idle

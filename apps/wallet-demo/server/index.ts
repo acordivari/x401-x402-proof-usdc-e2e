@@ -64,6 +64,7 @@ import {
   sha256Base64url,
   verifyAuthorization,
   type Jwk,
+  type PresentationProof,
   type VerifiableCredentialVerifier,
   type VerifiedAuthorization,
   type X401Payload,
@@ -73,6 +74,12 @@ import {
   InMemorySessionStore,
   type SessionStore,
 } from "./session-store.ts";
+import {
+  countSdClaims,
+  decodeIssuerJwtPayload,
+  loadExhibitRecording,
+  type ProofExhibitRecording,
+} from "./exhibit.ts";
 import { FLOWS, resolveDemoConfig, type DemoConfig, type Flow } from "./config.ts";
 
 export { FLOWS, resolveDemoConfig, type DemoConfig, type Flow };
@@ -226,11 +233,28 @@ export interface DemoApp {
 }
 
 /**
+ * The recorded presentation the exhibit displays, paired with the trust anchor
+ * that verifies it. Injecting the pair (rather than the recording alone) is what
+ * lets the route's real logic run offline: a locally-issued recording verifies
+ * against `localVcVerifier`, a Proof recording against the Proof SDK, with no
+ * branch inside the route itself.
+ */
+export interface ExhibitSeam {
+  recording: ProofExhibitRecording;
+  verifier: VerifiableCredentialVerifier;
+}
+
+/** Injected dependencies. Every field defaults to the real, config-driven impl. */
+export interface DemoAppDeps {
+  exhibit?: ExhibitSeam;
+}
+
+/**
  * Build the demo orchestrator (and boot its in-process merchant) WITHOUT listening
  * the orchestrator itself — so tests can drive every endpoint over real HTTP on an
  * ephemeral port, and `main()` can listen it on DEMO_PORT for the live demo.
  */
-export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
+export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Promise<DemoApp> {
   // Resolve config first: the fail-closed checks (encryptor key / auth token /
   // session secret) throw BEFORE any server boots (no leaked merchant listener
   // on a refused start). Aliases keep the historical names used throughout.
@@ -289,24 +313,41 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
   });
   const callbackUri = cfg.proof.callbackUri;
   const proofLiveReady = Boolean(cfg.proof.clientId && cfg.proof.clientSecret);
-  // Built once when Proof client creds are present; configures the SDK (trust
-  // store + hosted-request PAR) so both verify and authorize go through it.
-  const sdkVerifier: VerifiableCredentialVerifier | undefined = proofLiveReady
-    ? createVcVerifier({
-        mode: "live",
-        proof: {
-          trustRoot: cfg.proof.trustRoot,
-          sdkInit: {
-            environment: cfg.proof.environment as never,
-            clientId: cfg.proof.clientId,
-            clientSecret: cfg.proof.clientSecret,
-            callbackUri,
-            responseMode: cfg.proof.responseMode,
-            usePushedAuthorizationRequest: true,
-          },
-        },
-      })
-    : undefined;
+  // Always built, in ONE call: the SDK's verify half needs no client credentials
+  // (it pins to Proof's committed trust store, which ships in the package), so
+  // the read-only exhibit can re-verify a real Proof credential on a deployment
+  // that holds no Proof secret and never talks to Proof. The request half — the
+  // hosted PAR authorize URL — is added only when the credentials are present.
+  // Configuring once matters: `configureProofSdk` is first-config-wins, so a
+  // verify-only call followed by a full one would silently leave no client.
+  const sdkVerifier: VerifiableCredentialVerifier = createVcVerifier({
+    mode: "live",
+    proof: {
+      trustRoot: cfg.proof.trustRoot,
+      ...(proofLiveReady
+        ? {
+            sdkInit: {
+              environment: cfg.proof.environment as never,
+              clientId: cfg.proof.clientId,
+              clientSecret: cfg.proof.clientSecret,
+              callbackUri,
+              responseMode: cfg.proof.responseMode,
+              usePushedAuthorizationRequest: true,
+            },
+          }
+        : {}),
+    },
+  });
+
+  // The exhibit seam: a recorded presentation plus the trust anchor that verifies
+  // it. Default = the real Proof recording on disk, verified by the SDK against
+  // Proof's CA. Tests inject a locally-issued recording + `localVcVerifier`, so
+  // the route's real logic runs offline with no Proof credential in CI.
+  const exhibit: ExhibitSeam | undefined = (() => {
+    if (deps?.exhibit) return deps.exhibit;
+    const recording = loadExhibitRecording(cfg.exhibitFile);
+    return recording ? { recording, verifier: sdkVerifier } : undefined;
+  })();
 
   // Which flows use the real Proof identity (vs the local self-issued substrate):
   // proof-hosted always; delegated when PROOF_MODE=live (otherwise it grants off
@@ -314,7 +355,7 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
   const usesProof = (f: Flow): boolean => f === "proof-hosted" || (f === "delegated" && MODE === "live");
   const verifierFor = (f: Flow): VerifiableCredentialVerifier => {
     if (usesProof(f)) {
-      if (!sdkVerifier) throw new Error("proof identity needs PROOF_CLIENT_ID + PROOF_CLIENT_SECRET");
+      if (!proofLiveReady) throw new Error("proof identity needs PROOF_CLIENT_ID + PROOF_CLIENT_SECRET");
       return sdkVerifier;
     }
     return localVerifier;
@@ -793,6 +834,78 @@ export async function createDemoApp(config?: DemoConfig): Promise<DemoApp> {
     }
   });
 
+  // --- the exhibit: a REAL recorded Proof credential, re-verified live ---
+  //
+  // Read-only and deliberately a dead end: nothing here touches
+  // issueIntentFromPresentation, so no mandate can ever come out of a recording.
+  // Two verifications run on every request, both real:
+  //   1. against the nonce the presentation was captured with  -> verifies
+  //   2. against a fresh single-use challenge                  -> must NOT
+  // (2) is the point. It uses a real credential to show why a recorded one
+  // cannot buy anything, which is also why publishing this artifact is safe.
+  app.get("/api/proof/exhibit", async (_req, res) => {
+    if (!exhibit) return res.json({ available: false });
+    const { recording, verifier } = exhibit;
+    try {
+      const asRecorded = await verifier.verifyPresentation({
+        vpToken: recording.vpToken,
+        nonce: recording.nonce,
+      });
+      const replayChallenge = await createIdentityChallenge({
+        encryptor,
+        verifierId: VERIFIER_ID,
+        resource: `${VERIFIER_ID}/exhibit/replay-check`,
+        method: "GET",
+        ttlSeconds: 300,
+      });
+      const asReplayed = await verifier.verifyPresentation({
+        vpToken: recording.vpToken,
+        nonce: replayChallenge.value,
+      });
+
+      const meta = decodeIssuerJwtPayload(recording.vpToken);
+      const disclosedNames = asRecorded.claimsDisclosed ?? [];
+      const totalSdClaims = countSdClaims(recording.vpToken);
+      res.json({
+        available: true,
+        capturedAt: recording.capturedAt,
+        proof: recording.proof,
+        // Served in full so a visitor can verify it independently rather than
+        // taking this server's word for any of the above.
+        vpToken: recording.vpToken,
+        credential: {
+          issuer: asRecorded.issuer,
+          issuerCert: asRecorded.issuerCert,
+          vct: typeof meta.vct === "string" ? meta.vct : undefined,
+          issuedAt: recording.credential.issuedAt,
+          // Fairfax mints these with no `exp` and no `status`: the exhibit does
+          // not expire and cannot be revoked upstream. The UI says so.
+          expiresAt: recording.credential.expiresAt,
+          revocable: typeof meta.status === "object" && meta.status !== null,
+        },
+        disclosure: {
+          disclosed: disclosedNames.map((name) => ({ name, value: asRecorded.subject?.[name] })),
+          disclosedCount: disclosedNames.length,
+          totalSdClaims,
+          // Present in the signed credential only as salted hashes. Selective
+          // disclosure, shown rather than asserted.
+          withheldCount: Math.max(0, totalSdClaims - disclosedNames.length),
+        },
+        // The payment this human approved on Proof's screen, from the KB-JWT.
+        paymentApproved: asRecorded.paymentApproved,
+        payment: recording.transactionDataDecoded.payload,
+        liveVerification: {
+          asRecorded: summarizeProof(asRecorded),
+          asReplayed: summarizeProof(asReplayed),
+          replayNonce: replayChallenge.value,
+        },
+        capturedVerification: recording.capturedVerification,
+      });
+    } catch (err) {
+      res.status(500).json({ available: false, error: String(err) });
+    }
+  });
+
   // --- live fragment callback: forward the vp_token from the URL fragment ---
   app.get("/proof/callback", (_req, res) => {
     console.log("[demo] /proof/callback hit (browser will POST the vp_token from the fragment)");
@@ -923,6 +1036,19 @@ function summarizeVerification(v: VerifiedAuthorization) {
     subject: v.proof?.subject ?? {},
     // The payment the holder cryptographically approved, from the KB-JWT.
     paymentApproved: v.proof?.paymentApproved,
+  };
+}
+
+/** Projection of a single credential verification (the exhibit's two runs). */
+function summarizeProof(p: PresentationProof) {
+  return {
+    ok: p.result.ok,
+    violations: p.result.ok ? [] : p.result.violations,
+    nonceBound: p.nonceBound,
+    holderBound: p.holderBound,
+    issuer: p.issuer,
+    issuerCert: p.issuerCert,
+    disclosed: p.claimsDisclosed ?? [],
   };
 }
 

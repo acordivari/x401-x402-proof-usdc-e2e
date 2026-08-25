@@ -88,5 +88,24 @@ services:
       - key: PROOF_REDIRECT_URI
         sync: false
 
+      # --- the recorded Proof exhibit (optional) ---
+      # A real, signed credential artifact. It is NOT in the repo and must never
+      # be: add it in the Render dashboard as a SECRET FILE (Environment ->
+      # Secret Files) with filename `.proof-recording.json`, which Render mounts
+      # at the repo root — exactly where the default below looks. Produce it with
+      # `npm run record:proof`.
+      #
+      # Deliberately a secret file rather than a committed asset: the Fairfax
+      # credential carries no `exp` and no status list, so it neither expires nor
+      # can be revoked upstream. Deleting the secret file is the ONLY way to
+      # withdraw it, and that only works if it was never committed. Absent file
+      # => the exhibit card simply does not render; nothing else changes.
+      #
+      # Note this needs no Proof credentials at all: the SDK's verify half pins
+      # to a trust store that ships in the package, so PROOF_MODE stays `local`,
+      # the service holds no Proof secret, and DEMO_PUBLIC_TOKEN stays legal.
+      - key: PROOF_EXHIBIT_FILE
+        value: .proof-recording.json
+
       # NOTE: DEMO_PORT is deliberately absent — Render injects PORT, which the
       # config prefers. Setting DEMO_PORT here would bind an unroutable port.
