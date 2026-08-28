@@ -5,6 +5,7 @@
   import PaymentAuthCard from "./lib/PaymentAuthCard.svelte";
   import MerchantPanel from "./lib/MerchantPanel.svelte";
   import ProofExhibit from "./lib/ProofExhibit.svelte";
+  import StartHere from "./lib/StartHere.svelte";
   import {
     ensureHolderKeys,
     presentInBrowser,
@@ -61,10 +62,13 @@
     if (proofBtn) proofBtn.resolveAuthorizationUrl = async () => authSession?.authorizeUrl ?? null;
   });
 
+  // Display names only — the flow ids on the wire are unchanged. "Self-issued"
+  // and "Proof-hosted" describe who issued the credential, which is not the
+  // question a first-time visitor is asking; "whose wallet am I using" is.
   const FLOW_LABEL: Record<string, string> = {
-    "self-issued": "Self-issued",
-    "proof-hosted": "Proof-hosted",
-    "delegated": "Delegated (autonomous)",
+    "self-issued": "Browser wallet",
+    "proof-hosted": "Proof wallet",
+    "delegated": "Standing mandate",
   };
 
   // Live mode: when the redirect_uri is a page we don't control, the user pastes
@@ -342,10 +346,11 @@
 
 <header class="top">
   <div>
-    <h1>x401 + x402 — Who authorized this agentic payment?</h1>
-    <p>A verified human selectively discloses identity <b>and</b> authorizes the payment in one credential presentation; the agent then settles over x402.</p>
+    <h1>Who authorized this agentic payment?</h1>
+    <p>An agent pays for something — and a verified human's approval, not just a key, is what lets it. Identity and payment are approved together, in one presentation.</p>
   </div>
   <div class="row">
+    <span class="pill" title="x401 identity presentation · x402 payment rail · HAM authorization mandate">x401 · x402 · HAM</span>
     <span class="pill">mode <b style="color:var(--acc);margin-left:4px">{me.mode}</b></span>
     <span class="pill">agent <span class="mono">{short(me.agentWallet)}</span></span>
     <button class="ghost" onclick={reset}>Reset</button>
@@ -355,8 +360,8 @@
 {#if needsLogin}
   <div class="wrap">
     <div class="card" style="max-width:440px;margin:48px auto">
-      <h2>🔒 Access required</h2>
-      <p class="note">This orchestrator can mint credentials and spend mandates, so it's gated. Enter the access token to continue.</p>
+      <h2>🔒 Enter the demo</h2>
+      <p class="note">This demo keeps a little state for each visitor, so it asks for a token first. If you were sent a link, the token below is yours to use.</p>
       <input
         type="password"
         bind:value={token}
@@ -390,6 +395,7 @@
   </div>
 {:else}
 <div class="wrap">
+  <StartHere proofLiveReady={me.proofLiveReady === true} exhibitAvailable={exhibit?.available === true} />
   <div class="flowbar">
     <span class="mut" style="font-size:12px">Wallet workflow</span>
     <div class="seg">
@@ -408,9 +414,9 @@
       </span>
     {/if}
     <span class="mut" style="font-size:12px">
-      {#if me.flow === 'self-issued'}browser-held credential · you approve each purchase
-      {:else if me.flow === 'proof-hosted'}real Proof wallet (SDK) · you approve each purchase
-      {:else}one signed mandate · the agent then buys autonomously{/if}
+      {#if me.flow === 'self-issued'}you vouch for yourself · approve every purchase
+      {:else if me.flow === 'proof-hosted'}Proof vouches for you · approve every purchase
+      {:else}approve once, up front · the agent then buys on its own{/if}
     </span>
   </div>
 </div>
@@ -573,8 +579,10 @@
         <h2>Protocol flow</h2>
         <FlowViz {steps} />
       </div>
-      <MerchantPanel {orders} {intent} {verification} />
+      <!-- The exhibit sits above live orders: the Start-here card points down at
+           it, and orders only become interesting after a purchase. -->
       <ProofExhibit {exhibit} />
+      <MerchantPanel {orders} {intent} {verification} />
     </div>
   </div>
 </div>
