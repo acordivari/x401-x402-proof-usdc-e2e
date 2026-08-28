@@ -346,6 +346,11 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
   const exhibit: ExhibitSeam | undefined = (() => {
     if (deps?.exhibit) return deps.exhibit;
     const recording = loadExhibitRecording(cfg.exhibitFile);
+    console.log(
+      recording
+        ? `[demo] exhibit: recorded Proof credential loaded from ${cfg.exhibitFile} (captured ${recording.capturedAt})`
+        : `[demo] exhibit: no recording at ${cfg.exhibitFile} — the exhibit card will not render`,
+    );
     return recording ? { recording, verifier: sdkVerifier } : undefined;
   })();
 

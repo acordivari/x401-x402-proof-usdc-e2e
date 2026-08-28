@@ -212,7 +212,11 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
       : {}),
     ledgerMode: env.LEDGER_MODE === "http" ? "http" : "local",
     ledgerFile: env.LEDGER_FILE ?? path.join(os.tmpdir(), "agentic-payments-spend-ledger.json"),
-    exhibitFile: env.PROOF_EXHIBIT_FILE ?? path.resolve(REPO_ROOT, PROOF_EXHIBIT_FILE),
+    // Resolved against the REPO ROOT, not cwd: `npm run demo:server` runs from
+    // apps/wallet-demo, so a bare relative name would land in the wrong
+    // directory (and did — a PaaS secret file mounted at the project root was
+    // silently not found). An absolute override still wins, per path.resolve.
+    exhibitFile: path.resolve(REPO_ROOT, env.PROOF_EXHIBIT_FILE ?? PROOF_EXHIBIT_FILE),
     sessionStore: env.SESSION_STORE === "file" ? "file" : "memory",
     sessionFile: env.SESSION_FILE ?? path.join(os.tmpdir(), "agentic-payments-sessions.json"),
     sessionTtlMs: Number(env.DEMO_SESSION_TTL_MS ?? 3_600_000), // 1h idle

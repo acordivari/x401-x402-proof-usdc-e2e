@@ -397,11 +397,16 @@
         <button
           class="seg-btn {me.flow === f ? 'on' : ''}"
           disabled={busy || (f === 'proof-hosted' && !me.proofLiveReady)}
-          title={f === 'proof-hosted' && !me.proofLiveReady ? 'Set PROOF_CLIENT_ID + PROOF_CLIENT_SECRET and PROOF_MODE=live' : ''}
+          title={f === 'proof-hosted' && !me.proofLiveReady ? 'A live Proof presentation needs your own Proof identity verification, so it is off on this deployment. The panel on the right shows a real Proof credential instead. (Operators: PROOF_CLIENT_ID + PROOF_CLIENT_SECRET with PROOF_MODE=live.)' : ''}
           onclick={() => selectFlow(f)}
         >{FLOW_LABEL[f] ?? f}</button>
       {/each}
     </div>
+    {#if !me.proofLiveReady && exhibit?.available}
+      <span class="badge b-mut" title="Completing a real Proof presentation requires your own identity verification">
+        Proof wallet needs your own IDV — see the real credential below ↓
+      </span>
+    {/if}
     <span class="mut" style="font-size:12px">
       {#if me.flow === 'self-issued'}browser-held credential · you approve each purchase
       {:else if me.flow === 'proof-hosted'}real Proof wallet (SDK) · you approve each purchase

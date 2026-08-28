@@ -16,6 +16,7 @@
  * verifier pinned to Proof's CA) is the same code path with the other impl.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -184,6 +185,49 @@ describe("with no recording deployed", () => {
     } finally {
       await demo.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+/**
+ * Regression: `npm run demo:server` runs with cwd = apps/wallet-demo, so a bare
+ * relative PROOF_EXHIBIT_FILE once resolved to apps/wallet-demo/... and silently
+ * missed a secret file mounted at the project root. The knob must mean the same
+ * thing however the workspace is invoked.
+ */
+describe("PROOF_EXHIBIT_FILE resolution", () => {
+  const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+  const withEnv = async (value: string) => {
+    const prev = process.env.PROOF_EXHIBIT_FILE;
+    process.env.PROOF_EXHIBIT_FILE = value;
+    try {
+      const { resolveDemoConfig } = await import("../apps/wallet-demo/server/config.ts");
+      return resolveDemoConfig().exhibitFile;
+    } finally {
+      process.env.PROOF_EXHIBIT_FILE = prev;
+    }
+  };
+
+  it("resolves a relative path against the repo root, not the cwd", async () => {
+    expect(await withEnv(".proof-recording.json")).toBe(
+      path.join(REPO_ROOT, ".proof-recording.json"),
+    );
+  });
+
+  it("leaves an absolute path alone (platforms that mount secrets elsewhere)", async () => {
+    expect(await withEnv("/etc/secrets/.proof-recording.json")).toBe(
+      "/etc/secrets/.proof-recording.json",
+    );
+  });
+
+  it("defaults to the repo root when unset", async () => {
+    const prev = process.env.PROOF_EXHIBIT_FILE;
+    delete process.env.PROOF_EXHIBIT_FILE;
+    try {
+      const { resolveDemoConfig } = await import("../apps/wallet-demo/server/config.ts");
+      expect(resolveDemoConfig().exhibitFile).toBe(path.join(REPO_ROOT, ".proof-recording.json"));
+    } finally {
+      process.env.PROOF_EXHIBIT_FILE = prev;
     }
   });
 });

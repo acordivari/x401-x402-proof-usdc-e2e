@@ -104,8 +104,16 @@ services:
       # Note this needs no Proof credentials at all: the SDK's verify half pins
       # to a trust store that ships in the package, so PROOF_MODE stays `local`,
       # the service holds no Proof secret, and DEMO_PUBLIC_TOKEN stays legal.
+      #
+      # Absolute on purpose. Render exposes every secret file at
+      # /etc/secrets/<filename> at runtime, always; the copy in the service root
+      # is a non-Docker convenience. An absolute path also sidesteps cwd
+      # entirely — startCommand runs from apps/wallet-demo, so a bare relative
+      # name would resolve there. (A relative value IS still supported and
+      # resolves against the repo root, not cwd; see config.ts.)
+      # The boot log prints the resolved path and whether it loaded.
       - key: PROOF_EXHIBIT_FILE
-        value: .proof-recording.json
+        value: /etc/secrets/.proof-recording.json
 
       # NOTE: DEMO_PORT is deliberately absent — Render injects PORT, which the
       # config prefers. Setting DEMO_PORT here would bind an unroutable port.
