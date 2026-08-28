@@ -107,14 +107,28 @@ export function countSdClaims(vpToken: string): number {
  * or stale file must not take down a demo that otherwise works offline.
  */
 export function loadExhibitRecording(file: string): ProofExhibitRecording | undefined {
-  let parsed: unknown;
+  // Read and parse are reported separately: "missing" and "present but
+  // corrupt" need completely different fixes, and conflating them sent a
+  // truncated upload looking like a wrong path.
+  let raw: string;
   try {
-    parsed = JSON.parse(readFileSync(file, "utf8"));
+    raw = readFileSync(file, "utf8");
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") {
       console.warn(`[demo] exhibit recording at ${file} could not be read: ${(err as Error).message}`);
     }
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.warn(
+      `[demo] exhibit recording at ${file} was read (${raw.length} bytes) but is not valid JSON: ` +
+        `${(err as Error).message}. 0 bytes => the file is empty; fewer bytes than the local ` +
+        `.proof-recording.json => the upload was truncated. Re-upload the file whole.`,
+    );
     return undefined;
   }
   const rec = parsed as Partial<ProofExhibitRecording>;
