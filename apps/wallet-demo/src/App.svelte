@@ -50,6 +50,11 @@
   let token = $state("");
   let budgetUsd = $state("5.00");
   let agentRun = $state<any>(undefined);
+  // Whether THIS session settled a purchase. Deliberately not derived from the
+  // orders list: /api/orders is the merchant's global ledger, shared by every
+  // visitor, so another person's purchase would light up your protocol flow —
+  // and Reset could never turn it off, since the poll refills it every 2s.
+  let didSettle = $state(false);
   // The recorded real-Proof exhibit. Absent on a deployment with no recording,
   // in which case the card simply does not render.
   let exhibit = $state<any>(undefined);
@@ -98,7 +103,7 @@
 
   const steps = $derived.by(() => {
     const provisioned = proofIdentity || !!credential;
-    const settled = orders.some((o) => o.state === "SETTLED");
+    const settled = didSettle;
     const paying = !!intent && !settled;
     const s = (status: any, title: string, sub?: string) => ({ status, title, sub });
     return [
@@ -125,7 +130,7 @@
     selectedSku = catalog[0]?.sku ?? "";
     if (me.identity !== "proof") {
       keys = await ensureHolderKeys();
-      credential = loadCredential();
+      credential = loadWalletForCurrentIssuer();
     }
     // Fallback: if Proof redirected the whole tab to the origin with the token in
     // the fragment, complete it here (the /proof/callback page handles the normal case).
@@ -143,6 +148,22 @@
     setInterval(refreshOrders, 2000);
     setInterval(refreshMe, 2500); // reflect verification/intent landed via the callback page
   });
+
+  /**
+   * Read the browser wallet back, discarding a credential minted by a previous
+   * server boot. Without this the demo dead-ends: the presentation is rejected
+   * ("untrusted issuer") and nothing on screen explains why or how to recover.
+   */
+  function loadWalletForCurrentIssuer(): HeldCredential | undefined {
+    const held = loadCredential();
+    if (!held) return undefined;
+    if (me.issuerKid && held.issuerKid !== me.issuerKid) {
+      clearWallet();
+      logLine("Cleared a credential issued by a previous server instance — provision a new one.", "info");
+      return undefined;
+    }
+    return held;
+  }
 
   async function refreshMe() {
     me = await api("/api/me");
@@ -202,7 +223,7 @@
       const cat = await api("/api/catalog");
       catalog = cat.products ?? catalog;
       if (!selectedSku) selectedSku = catalog[0]?.sku ?? "";
-      if (me.identity !== "proof") { keys = await ensureHolderKeys(); credential = loadCredential(); }
+      if (me.identity !== "proof") { keys = await ensureHolderKeys(); credential = loadWalletForCurrentIssuer(); }
       refreshOrders();
       logLine("Unlocked.", "ok");
     } else if (r?.retryAfter) {
@@ -221,7 +242,7 @@
       const claims = DEMO_HOLDERS[persona];
       const r = await api("/api/wallet/issue", { holderPublicJwk: keys.publicJwk, claims });
       if (r.error) return logLine("Issuance failed: " + r.error, "bad");
-      credential = r.credential;
+      credential = { ...r.credential, issuerKid: me.issuerKid };
       saveCredential(credential!);
       logLine(`Wallet provisioned: ${persona} (credential held in browser)`, "ok");
     } finally { busy = false; }
@@ -233,7 +254,7 @@
     try {
       const r = await api("/api/flow", { flow: f });
       if (r.error) return logLine(r.error, "bad");
-      authSession = undefined; present = undefined; verification = undefined; intent = undefined; agentRun = undefined;
+      authSession = undefined; present = undefined; verification = undefined; intent = undefined; agentRun = undefined; didSettle = false;
       await refreshMe();
       if (me.identity !== "proof") { keys = await ensureHolderKeys(); credential = loadCredential(); }
       logLine(`Switched to the ${FLOW_LABEL[f] ?? f} workflow.`, "info");
@@ -242,7 +263,7 @@
 
   async function startAuthorize() {
     if (!delegated && !selectedSku) return;
-    busy = true; present = undefined; verification = undefined; intent = undefined; agentRun = undefined;
+    busy = true; present = undefined; verification = undefined; intent = undefined; agentRun = undefined; didSettle = false;
     try {
       authSession = await api("/api/authorize/start", {
         sku: selectedSku, requestedClaims: requested, ttlSeconds: ttl,
@@ -300,6 +321,7 @@
     try {
       logLine("Agent transacting autonomously under the standing mandate (no human approval)…", "info");
       agentRun = await api("/api/agent/run", {});
+      didSettle = (agentRun.purchases ?? []).some((p: any) => p.settled);
       for (const p of agentRun.purchases ?? []) {
         if (p.settled) logLine(`✓ ${p.name} ($${p.priceUsd}) settled — presigned mandate, no human in the loop`, "ok");
         else logLine(`✗ ${p.sku} denied (HTTP ${p.status}): ${p.reason ?? ""}${(p.violations?.length ? " — " + p.violations.join("; ") : "")}`, "bad");
@@ -330,6 +352,7 @@
     try {
       logLine(`Agent paying for ${selectedSku} via x402…`, "info");
       const r = await api("/api/buy", { sku: selectedSku });
+      didSettle = r.settled?.state === "SETTLED";
       if (r.ok) logLine(`✓ ${selectedSku}: ${r.settled?.state ?? "authorized"}${r.settled?.txHash ? " · tx " + short(r.settled.txHash) : ""}`, "ok");
       else logLine(`✗ refused (HTTP ${r.status}): ${JSON.stringify(r.body?.violations ?? r.body?.error)}`, "bad");
       refreshOrders();
@@ -337,10 +360,23 @@
   }
 
   async function reset() {
-    await api("/api/reset", {});
-    authSession = undefined; present = undefined; verification = undefined; intent = undefined; agentRun = undefined;
-    logLine("Session reset.", "info");
-    refreshMe();
+    busy = true;
+    try {
+      await api("/api/reset", {});
+      authSession = undefined; present = undefined; verification = undefined;
+      intent = undefined; agentRun = undefined; didSettle = false; pasted = "";
+      // The browser-held credential is demo state too. Leaving it in place is
+      // what made Reset look like a no-op: step 1 stayed green, the wallet card
+      // stayed populated, and nothing visibly changed for anyone who had not
+      // already gotten past authorization.
+      if (me.identity !== "proof") {
+        clearWallet();
+        credential = undefined;
+        keys = await ensureHolderKeys(); // fresh holder key, not the cleared one
+      }
+      logLine("Reset — session cleared and the browser wallet emptied.", "info");
+      await refreshMe();
+    } finally { busy = false; }
   }
 </script>
 

@@ -303,6 +303,12 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
   const authRequired = Boolean(authToken);
   const issuerKeys = await generateEs256Keys();
   const localIssuer = new LocalVcIssuer({ issuerId: ISSUER_ID, privateJwk: issuerKeys.privateJwk });
+  // The local issuer key is generated per BOOT, so a credential a browser cached
+  // from an earlier run can never verify against this one — and on a PaaS that
+  // idles down (Render free spins down after ~15 min), that is every returning
+  // visitor. Publishing a fingerprint lets the client notice and discard a
+  // credential from a previous instance instead of dead-ending on "rejected".
+  const issuerKid = (await sha256Base64url(JSON.stringify(issuerKeys.publicJwk))).slice(0, 16);
 
   // --- VC verifiers (the swappable seam), one per identity substrate ---
   // local : self-issued SD-JWT-VC against our trust anchor (offline)
@@ -599,6 +605,7 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
       merchant: MERCHANT,
       verifierId: VERIFIER_ID,
       claimUniverse: PROOF_ID_CLAIM_KEYS,
+      issuerKid,
       budgetUsd: MANDATE_BUDGET_USD,
       mandateTtl: MANDATE_TTL,
       sku: sess.x401?.sku,

@@ -22,6 +22,13 @@ export interface HeldCredential {
   id: string;
   compact: string;
   claimNames: string[];
+  /**
+   * Fingerprint of the issuer key that minted this credential (from /api/me).
+   * The local issuer key is per-boot, so a cached credential whose kid no longer
+   * matches was issued by a previous server instance and can never verify. The
+   * app discards it on load instead of presenting it and failing.
+   */
+  issuerKid?: string;
 }
 
 export interface HolderKeys {
