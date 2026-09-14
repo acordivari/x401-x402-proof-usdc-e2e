@@ -7,6 +7,10 @@
    * an identity provider. This card closes that gap without asking a visitor to
    * complete Proof's IDV — and then shows why the recording still cannot buy
    * anything, which is the same replay gate protecting a live presentation.
+   *
+   * This is the EVIDENCE panel. The narrative walkthrough of the same recording
+   * lives in ProofWalkthrough.svelte, behind the "Proof wallet" tab, and this
+   * card is hidden while that one is open.
    */
   import { usd } from "./api";
   let { exhibit }: { exhibit: any } = $props();
@@ -36,11 +40,10 @@
     </h2>
 
     <p class="note" style="margin:0 0 12px">
-      Everything else in this demo runs on a credential you minted yourself moments ago.
-      This one is different: it was issued by <b>Proof</b> to a real person who completed
-      identity verification, presented once, and captured. Doing this yourself would mean
-      going through Proof's IDV — so instead, here is the real thing, re-verified by this
-      server every time you load the page.
+      The credential you mint above is real cryptography, but you vouched for yourself. This
+      one was issued by <b>Proof</b> to a real person who completed identity verification —
+      re-verified by this server every time you load the page.
+      <b>Open the “Proof wallet” tab</b> to walk through it step by step.
     </p>
 
     <!-- The two verifications. The second one is the point. -->
@@ -67,10 +70,9 @@
     </div>
 
     <p class="note" style="margin:10px 0 0">
-      That second line is the safety property, not a bug. A presentation is key-bound to
-      the single-use nonce it was made for, so this recording verifies as a
-      <b>historical fact</b> and is worthless as authorization. It cannot pay for anything,
-      here or anywhere — which is exactly why it is safe to publish.
+      That second line is the safety property, not a bug. A presentation is key-bound to the
+      single-use nonce it was made for, so this verifies as a <b>historical fact</b> and is
+      worthless as authorization — which is exactly why it is safe to publish.
     </p>
 
     <div class="divider"></div>
@@ -120,6 +122,9 @@
     <div class="kv">
       <span class="k">Issuer</span><span class="mono">{cred.issuer ?? "—"}</span>
       <span class="k">Signed by</span><span class="mono">{cred.issuerCert?.subject?.replace(/\n/g, " ") ?? "—"}</span>
+      {#if cred.issuerCert?.trustAnchor}
+        <span class="k">Chain pinned to</span><span>{cred.issuerCert.trustAnchor}</span>
+      {/if}
       <span class="k">Type</span><span class="mono" style="word-break:break-all">{cred.vct ?? "—"}</span>
       <span class="k">Presented</span><span>{new Date(exhibit.capturedAt).toLocaleString()}</span>
       <span class="k">Expires</span>
@@ -139,6 +144,14 @@
       </p>
       <textarea class="mono" readonly rows="6" style="width:100%;font-size:10.5px"
         >{exhibit.vpToken}</textarea>
+      {#if exhibit.transactionData}
+        <p class="note" style="margin:10px 0 4px">
+          And the <span class="mono">transaction_data</span> whose digest was sealed into the
+          challenge — hash it yourself rather than taking the “payment bound” badge on faith:
+        </p>
+        <textarea class="mono" readonly rows="3" style="width:100%;font-size:10.5px"
+          >{exhibit.transactionData}</textarea>
+      {/if}
     </details>
   </div>
 {/if}

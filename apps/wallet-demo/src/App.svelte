@@ -5,7 +5,9 @@
   import PaymentAuthCard from "./lib/PaymentAuthCard.svelte";
   import MerchantPanel from "./lib/MerchantPanel.svelte";
   import ProofExhibit from "./lib/ProofExhibit.svelte";
+  import ProofWalkthrough from "./lib/ProofWalkthrough.svelte";
   import StartHere from "./lib/StartHere.svelte";
+  import ThreeQuestions from "./lib/ThreeQuestions.svelte";
   import {
     ensureHolderKeys,
     presentInBrowser,
@@ -43,6 +45,14 @@
   // local self-issued browser wallet); delegated == the autonomous mandate flow.
   const proofIdentity = $derived(me.identity === "proof");
   const delegated = $derived(me.flow === "delegated");
+  /**
+   * The Proof tab on a deployment with no live Proof credentials. Deliberately
+   * CLIENT-SIDE ONLY: it never POSTs /api/flow, so that endpoint keeps its
+   * fail-closed 400 and the server's posture is untouched. It exists because a
+   * greyed-out third option reads as "broken", when in fact the most valuable
+   * artifact in the demo — a genuine Proof credential — is sitting right there.
+   */
+  let proofPreview = $state(false);
   // Auth gate (F1): when the orchestrator requires a token and we haven't passed
   // it, show only the login card. Off in local dev (authRequired is falsy).
   const needsLogin = $derived(me.authRequired === true && me.authed !== true);
@@ -58,6 +68,7 @@
   // The recorded real-Proof exhibit. Absent on a deployment with no recording,
   // in which case the card simply does not render.
   let exhibit = $state<any>(undefined);
+  const proofPreviewable = $derived(me.proofLiveReady !== true && exhibit?.available === true);
 
   // Proof's official web component (@proof.com/proof-vc-web). We feed it our
   // server-built (PAR) authorize URL via `resolveAuthorizationUrl` so the client
@@ -100,6 +111,21 @@
   const previewDisclose = $derived(requested.filter((c) => heldNames.includes(c)));
   const previewWithheld = $derived(heldNames.filter((c) => !requested.includes(c)));
   const previewMissing = $derived(requested.filter((c) => !heldNames.includes(c)));
+
+  // What the right-hand flow rail shows while the recorded Proof credential is
+  // on screen. Same component, same vocabulary — the difference is that step 5
+  // is a deliberate dead end rather than something the visitor can advance.
+  const proofSteps = $derived([
+    { status: "done" as const, title: "Proof issued the credential", sub: "SD-JWT-VC signed under an x5c chain" },
+    { status: "done" as const, title: "Human approved a payment", sub: "sealed into the key-binding JWT" },
+    {
+      status: "done" as const,
+      title: "Selective disclosure",
+      sub: `${exhibit?.disclosure?.disclosedCount ?? 0} of ${exhibit?.disclosure?.totalSdClaims ?? 0} attributes revealed`,
+    },
+    { status: "done" as const, title: "Verified against the CA", sub: "offline — no call to Proof" },
+    { status: "bad" as const, title: "Issue HAM Intent", sub: "refused — a recording is nonce-bound" },
+  ]);
 
   const steps = $derived.by(() => {
     const provisioned = proofIdentity || !!credential;
@@ -249,7 +275,17 @@
   }
 
   async function selectFlow(f: string) {
-    if (f === me.flow || busy) return;
+    if (busy) return;
+    // Leaving the Proof preview has to happen BEFORE the equality guard below.
+    // The preview is client-side, so `me.flow` never moved while it was open —
+    // meaning the tab you were nominally already on ("Browser wallet") compares
+    // equal, returns early, and strands you in the preview with no way out.
+    const wasPreviewing = proofPreview;
+    proofPreview = false;
+    if (f === me.flow) {
+      if (wasPreviewing) logLine(`Back to the ${FLOW_LABEL[f] ?? f} workflow.`, "info");
+      return; // nothing to switch server-side; keep any in-flight session intact
+    }
     busy = true;
     try {
       const r = await api("/api/flow", { flow: f });
@@ -382,8 +418,8 @@
 
 <header class="top">
   <div>
-    <h1>Who authorized this agentic payment?</h1>
-    <p>An agent pays for something — and a verified human's approval, not just a key, is what lets it. Identity and payment are approved together, in one presentation.</p>
+    <h1>Who is this? Says who? Did they authorize <i>this</i>?</h1>
+    <p>Every business interaction with a person on the internet answers those three questions. An agent paying on your behalf has to answer them too — and the third one is the one today's payment rails skip. This demo makes all three visible.</p>
   </div>
   <div class="row">
     <span class="pill" title="x401 identity presentation · x402 payment rail · HAM authorization mandate">x401 · x402 · HAM</span>
@@ -431,26 +467,36 @@
   </div>
 {:else}
 <div class="wrap">
+  <ThreeQuestions {exhibit} />
   <StartHere proofLiveReady={me.proofLiveReady === true} exhibitAvailable={exhibit?.available === true} />
   <div class="flowbar">
     <span class="mut" style="font-size:12px">Wallet workflow</span>
     <div class="seg">
       {#each (me.flows ?? []) as f}
-        <button
-          class="seg-btn {me.flow === f ? 'on' : ''}"
-          disabled={busy || (f === 'proof-hosted' && !me.proofLiveReady)}
-          title={f === 'proof-hosted' && !me.proofLiveReady ? 'A live Proof presentation needs your own Proof identity verification, so it is off on this deployment. The panel on the right shows a real Proof credential instead. (Operators: PROOF_CLIENT_ID + PROOF_CLIENT_SECRET with PROOF_MODE=live.)' : ''}
-          onclick={() => selectFlow(f)}
-        >{FLOW_LABEL[f] ?? f}</button>
+        {#if f === 'proof-hosted' && proofPreviewable}
+          <!-- Not a disabled control. A live presentation needs the visitor's own
+               identity verification, but the recorded credential behind this tab is
+               real and worth walking through, so the tab opens it rather than
+               greying out. Purely local state — no /api/flow call. -->
+          <button
+            class="seg-btn preview {proofPreview ? 'on' : ''}"
+            disabled={busy}
+            title="Walk through a genuine Proof-issued credential, re-verified live"
+            onclick={() => (proofPreview = true)}
+          >{FLOW_LABEL[f] ?? f} <span class="tag">real</span></button>
+        {:else}
+          <button
+            class="seg-btn {me.flow === f && !proofPreview ? 'on' : ''}"
+            disabled={busy || (f === 'proof-hosted' && !me.proofLiveReady)}
+            title={f === 'proof-hosted' && !me.proofLiveReady ? 'A live Proof presentation needs your own Proof identity verification, so it is off on this deployment. (Operators: PROOF_CLIENT_ID + PROOF_CLIENT_SECRET with PROOF_MODE=live.)' : ''}
+            onclick={() => selectFlow(f)}
+          >{FLOW_LABEL[f] ?? f}</button>
+        {/if}
       {/each}
     </div>
-    {#if !me.proofLiveReady && exhibit?.available}
-      <span class="badge b-mut" title="Completing a real Proof presentation requires your own identity verification">
-        Proof wallet needs your own IDV — see the real credential below ↓
-      </span>
-    {/if}
     <span class="mut" style="font-size:12px">
-      {#if me.flow === 'self-issued'}you vouch for yourself · approve every purchase
+      {#if proofPreview}a real Proof credential · recorded, re-verified, and deliberately unspendable
+      {:else if me.flow === 'self-issued'}you vouch for yourself · approve every purchase
       {:else if me.flow === 'proof-hosted'}Proof vouches for you · approve every purchase
       {:else}approve once, up front · the agent then buys on its own{/if}
     </span>
@@ -461,6 +507,9 @@
   <div class="grid">
     <!-- LEFT: wallet + authorization -->
     <div class="col">
+      {#if proofPreview}
+      <ProofWalkthrough {exhibit} />
+      {:else}
       <div class="card">
         <h2><span class="step">1</span> Wallet</h2>
         {#if proofIdentity}
@@ -599,6 +648,7 @@
           {#if revoked}<p class="note" style="margin:8px 0 0;color:var(--warn)">Revoked — the merchant will refuse this payment.</p>{/if}
         </div>
       {/if}
+      {/if}
 
       <div class="card">
         <h2>Activity</h2>
@@ -611,14 +661,25 @@
 
     <!-- RIGHT: flow + merchant -->
     <div class="col">
+      <!-- The real credential outranks everything else here: it is the actual
+           contribution, the flow rail is inert until you press something, and
+           orders only get interesting after a purchase. In the Proof tab the
+           walkthrough on the left supersedes it, so it drops out entirely. -->
+      {#if !proofPreview}<ProofExhibit {exhibit} />{/if}
       <div class="card">
         <h2>Protocol flow</h2>
-        <FlowViz {steps} />
+        <FlowViz steps={proofPreview ? proofSteps : steps} />
       </div>
-      <!-- The exhibit sits above live orders: the Start-here card points down at
-           it, and orders only become interesting after a purchase. -->
-      <ProofExhibit {exhibit} />
-      <MerchantPanel {orders} {intent} {verification} />
+      <!-- In the Proof tab, suppress the verification + Intent cards: they belong
+           to YOUR interactive session, and a signed mandate sitting beside a
+           walkthrough whose punchline is "this produces no mandate" reads as if
+           the recording issued it. Orders stay — that ledger is global and the
+           panel says so. -->
+      <MerchantPanel
+        {orders}
+        intent={proofPreview ? undefined : intent}
+        verification={proofPreview ? undefined : verification}
+      />
     </div>
   </div>
 </div>

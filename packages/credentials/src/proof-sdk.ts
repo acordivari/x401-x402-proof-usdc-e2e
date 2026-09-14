@@ -74,9 +74,17 @@ export interface ProofSdkConfig {
  */
 let sdkVerifier: Verifier | undefined;
 let sdkClient: ServerVCClient | undefined;
+/**
+ * The trust store the verifier actually pinned to. Tracked here rather than read
+ * back from a caller's options because config is first-config-wins: a later
+ * `proofSdkVcVerifier({ trustRoot })` does NOT rebuild the verifier, so its
+ * argument would misreport which store is in force.
+ */
+let sdkTrustRoot: TrustRoot | undefined;
 export function configureProofSdk(params: ProofSdkConfig): void {
   if (sdkVerifier) return;
-  sdkVerifier = createVerifier({ trustRoot: params.trustRoot ?? "development" });
+  sdkTrustRoot = params.trustRoot ?? "development";
+  sdkVerifier = createVerifier({ trustRoot: sdkTrustRoot });
   if (params.environment && params.clientId && params.callbackUri) {
     sdkClient = createClient({
       environment: params.environment,
@@ -115,7 +123,7 @@ export function proofSdkVcVerifier(opts: ProofSdkVerifierOptions = {}): Verifiab
       let holderBound = false;
       let nonceBound = false;
       let paymentApproved: unknown;
-      let issuerCert: { subject?: string; issuer?: string } | undefined;
+      let issuerCert: { subject?: string; issuer?: string; trustAnchor?: string } | undefined;
 
       try {
         if (!sdkVerifier) throw new Error("Proof SDK verifier not configured");
@@ -145,7 +153,7 @@ export function proofSdkVcVerifier(opts: ProofSdkVerifierOptions = {}): Verifiab
           jwt?: { header?: Record<string, unknown> };
         };
         paymentApproved = decoded.kbJwt?.payload?.payment_mandate_v1;
-        issuerCert = leafCertSummary(decoded.jwt?.header?.x5c);
+        issuerCert = leafCertSummary(decoded.jwt?.header?.x5c, sdkTrustRoot);
 
         if (!holderBound) violations.push("credential is not bound to a holder key (cnf)");
         if (!nonceBound) violations.push("key-binding nonce does not match the challenge");
@@ -199,12 +207,30 @@ export async function buildProofSdkAuthorizeUrl(input: ProofSdkAuthorizeInput): 
   });
 }
 
-/** Summarize the leaf x5c certificate (subject/issuer) for display, best-effort. */
-function leafCertSummary(x5c: unknown): { subject?: string; issuer?: string } | undefined {
+/**
+ * Summarize the leaf x5c certificate (subject/issuer) for display, best-effort.
+ *
+ * `trustAnchor` records WHICH committed trust store the chain was pinned to. It
+ * is only meaningful because this is reached solely after `verifyVPToken`
+ * resolved: the SDK verifies the x5c chain against that store and throws
+ * otherwise, so reaching here IS the chain having verified. The SDK exposes the
+ * store as a "development" | "production" selector rather than the root
+ * certificate, so that selector is the most specific thing we can honestly name.
+ */
+function leafCertSummary(
+  x5c: unknown,
+  trustRoot: TrustRoot | undefined,
+): { subject?: string; issuer?: string; trustAnchor?: string } | undefined {
   if (!Array.isArray(x5c) || typeof x5c[0] !== "string") return undefined;
   try {
     const cert = new X509Certificate(Buffer.from(x5c[0], "base64"));
-    return { subject: cert.subject, issuer: cert.issuer };
+    return {
+      subject: cert.subject,
+      issuer: cert.issuer,
+      ...(trustRoot !== undefined
+        ? { trustAnchor: `Proof committed trust store (${trustRoot})` }
+        : {}),
+    };
   } catch {
     return undefined;
   }

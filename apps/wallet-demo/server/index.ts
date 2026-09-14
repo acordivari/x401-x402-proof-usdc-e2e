@@ -881,10 +881,38 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
       res.json({
         available: true,
         capturedAt: recording.capturedAt,
+        // When THIS request re-verified it, so "checked just now" is literal
+        // rather than a claim the page makes about itself.
+        verifiedAt: new Date().toISOString(),
         proof: recording.proof,
+        /**
+         * The property that makes a public CA worth having: this check ran
+         * against a trust store shipped inside the SDK. No call to Proof, and
+         * `proofSecretHeld` says whether this deployment even holds a Proof
+         * credential (on the public demo it does not — see DEMO_PUBLIC_TOKEN).
+         */
+        offlineVerify: {
+          proofSecretHeld: proofLiveReady,
+          trustRoot: recording.proof.trustRoot,
+          environment: recording.proof.environment,
+        },
+        // What this presentation was SCOPED to. A credential is not a bearer
+        // token: it answered one question, from one named asker, once.
+        scopedTo: {
+          verifierId: recording.verifierId,
+          resource: recording.resource,
+          method: recording.method,
+          // The single-use value the key-binding JWT is welded to. Safe to
+          // publish: it is what makes the recording unusable (see asReplayed).
+          nonce: recording.nonce,
+        },
         // Served in full so a visitor can verify it independently rather than
         // taking this server's word for any of the above.
         vpToken: recording.vpToken,
+        // The exact bytes whose digest was sealed into the challenge, so the
+        // payment binding can be re-derived rather than believed.
+        transactionData: recording.transactionData,
+        transactionDataType: recording.transactionDataDecoded.type,
         credential: {
           issuer: asRecorded.issuer,
           issuerCert: asRecorded.issuerCert,

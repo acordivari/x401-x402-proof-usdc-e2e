@@ -31,6 +31,9 @@ header.top {
   position: sticky; top: 0; z-index: 5;
 }
 header.top h1 { font-size: 16px; letter-spacing: 0.2px; }
+/* The emphasis in "did they authorize THIS?" — the third question is the one the
+   payment rails skip, so it gets the accent rather than plain italics. */
+header.top h1 i { color: var(--acc2); font-style: italic; }
 header.top p { margin: 3px 0 0; font-size: 12.5px; color: var(--mut); }
 .grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 18px; }
 @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
@@ -80,6 +83,19 @@ input[type="number"], select {
 .seg-btn:hover:not(:disabled):not(.on) { color: var(--ink); }
 .seg-btn.on { background: linear-gradient(180deg, var(--acc), #4574e6); color: #fff; }
 .seg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* The Proof tab when it opens the recorded credential. Reads as a DIFFERENT KIND
+   of thing (green, the exhibit's colour) rather than a dimmed/broken one — the
+   greyed-out version of this control was the single most misread pixel on the
+   page, since it implied the Proof story was unavailable when it is the point. */
+.seg-btn.preview { color: var(--ok); }
+.seg-btn.preview:hover:not(:disabled):not(.on) { background: rgba(47, 210, 160, 0.1); }
+.seg-btn.preview.on { background: linear-gradient(180deg, var(--ok), #23b489); color: #05201a; }
+.seg-btn .tag {
+  font-size: 9.5px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 5px; margin-left: 5px; vertical-align: 1px;
+  background: rgba(47, 210, 160, 0.18); color: var(--ok);
+}
+.seg-btn.preview.on .tag { background: rgba(0, 0, 0, 0.22); color: #05201a; }
 .badge { font-size: 10.5px; font-weight: 800; padding: 2px 9px; border-radius: 20px; }
 .b-ok { background: rgba(47, 210, 160, 0.16); color: var(--ok); }
 .b-warn { background: rgba(230, 177, 60, 0.16); color: var(--warn); }
