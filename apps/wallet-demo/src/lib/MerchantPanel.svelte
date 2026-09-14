@@ -1,9 +1,12 @@
 <script lang="ts">
+  /**
+   * What the VERIFIER learned, and the mandate that came out of it. The order
+   * ledger used to live here too; it now sits in the left column (see
+   * MerchantOrders.svelte) so the two columns don't end at wildly different
+   * heights.
+   */
   import { usd, short } from "./api";
-  let { orders, intent, verification }: { orders: any[]; intent: any; verification: any } = $props();
-
-  const stateClass = (s: string) =>
-    s === "SETTLED" ? "b-ok" : s === "FAILED" || s === "EXPIRED" ? "b-bad" : "b-warn";
+  let { intent, verification }: { intent: any; verification: any } = $props();
 
   // Proof returns some claims as nested objects (e.g. age_equal_or_over = {18: true}).
   function fmtClaim(key: string, v: any): string {
@@ -16,28 +19,6 @@
     return String(v);
   }
 </script>
-
-<div class="card">
-  <h2>Mock-VeryGood-RX merchant · live orders</h2>
-  <table>
-    <thead><tr><th>Order</th><th>Item</th><th>USDC</th><th>State</th><th>Tx</th></tr></thead>
-    <tbody>
-      {#if orders?.length}
-        {#each orders as o}
-          <tr>
-            <td class="mono">{(o.id ?? "").replace("ord_0x", "0x").slice(0, 10)}…</td>
-            <td>{o.sku}</td>
-            <td>{usd(o.amount)}</td>
-            <td><span class="badge {stateClass(o.state)}">{o.state}</span></td>
-            <td class="mono">{short(o.txHash)}</td>
-          </tr>
-        {/each}
-      {:else}
-        <tr><td colspan="5" class="mut">No orders yet.</td></tr>
-      {/if}
-    </tbody>
-  </table>
-</div>
 
 {#if verification}
   <div class="card fade-in">

@@ -4,6 +4,7 @@
   import FlowViz from "./lib/FlowViz.svelte";
   import PaymentAuthCard from "./lib/PaymentAuthCard.svelte";
   import MerchantPanel from "./lib/MerchantPanel.svelte";
+  import MerchantOrders from "./lib/MerchantOrders.svelte";
   import ProofExhibit from "./lib/ProofExhibit.svelte";
   import ProofWalkthrough from "./lib/ProofWalkthrough.svelte";
   import StartHere from "./lib/StartHere.svelte";
@@ -540,9 +541,7 @@
       {:else}approve once, up front · the agent then buys on its own{/if}
     </span>
   </div>
-</div>
 
-<div class="wrap">
   <div class="grid">
     <!-- LEFT: wallet + authorization -->
     <div class="col">
@@ -696,6 +695,8 @@
           {#if !log.length}<div class="mut">No activity yet.</div>{/if}
         </div>
       </div>
+
+      <MerchantOrders {orders} />
     </div>
 
     <!-- RIGHT: flow + merchant -->
@@ -705,17 +706,19 @@
            orders only get interesting after a purchase. In the Proof tab the
            walkthrough on the left supersedes it, so it drops out entirely. -->
       {#if !proofPreview}<ProofExhibit {exhibit} />{/if}
-      <div class="card">
+      <!-- In the Proof tab this rail is the ONLY card in the right column (the
+           exhibit is superseded by the walkthrough, and the verifier/mandate
+           cards are suppressed), while the walkthrough on the left runs long. So
+           it follows you down rather than leaving a tall empty column. -->
+      <div class="card {proofPreview ? 'sticky-rail' : ''}">
         <h2>Protocol flow</h2>
         <FlowViz steps={proofPreview ? proofSteps : steps} />
       </div>
       <!-- In the Proof tab, suppress the verification + Intent cards: they belong
            to YOUR interactive session, and a signed mandate sitting beside a
            walkthrough whose punchline is "this produces no mandate" reads as if
-           the recording issued it. Orders stay — that ledger is global and the
-           panel says so. -->
+           the recording issued it. -->
       <MerchantPanel
-        {orders}
         intent={proofPreview ? undefined : intent}
         verification={proofPreview ? undefined : verification}
       />
@@ -723,3 +726,4 @@
   </div>
 </div>
 {/if}
+
