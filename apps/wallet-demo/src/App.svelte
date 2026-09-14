@@ -152,7 +152,7 @@
     window.addEventListener("hashchange", () => void tryLinkUnlock());
     const cat = await api("/api/catalog");
     catalog = cat.products ?? [];
-    exhibit = await api("/api/proof/exhibit");
+    await loadExhibit();
     selectedSku = catalog[0]?.sku ?? "";
     if (me.identity !== "proof") {
       keys = await ensureHolderKeys();
@@ -191,8 +191,33 @@
     return held;
   }
 
+  /**
+   * Load the recorded Proof exhibit. A FUNCTION, not a one-off call in onMount,
+   * because /api/proof/exhibit sits behind the access gate: on a token-gated
+   * deployment the mount-time fetch 401s, `available` comes back undefined, and
+   * the Proof tab then renders as a disabled control — the demo silently loses
+   * its most valuable artifact for anyone who typed the token instead of
+   * arriving via the `#token=` link (which authenticates before this runs).
+   * So login() calls it again.
+   */
+  async function loadExhibit() {
+    const r = await api("/api/proof/exhibit");
+    exhibit = r?.available === true ? r : undefined;
+  }
+
+  /**
+   * `gen` invalidates in-flight /api/me responses. Reset clears session state
+   * locally and then re-reads, but a poll (every 2.5s) issued BEFORE the reset
+   * can land after it, carrying the pre-reset intent/verification and putting
+   * the Pay card and a lit-up protocol flow straight back on screen. From the
+   * outside that is simply "Reset doesn't work", intermittently.
+   */
+  let meGen = 0;
   async function refreshMe() {
-    me = await api("/api/me");
+    const gen = meGen;
+    const next = await api("/api/me");
+    if (gen !== meGen) return; // superseded by a reset while this was in flight
+    me = next;
     intent = me.intent ?? intent;
     if (me.verification) verification = me.verification;
     if (me.sku) selectedSku = me.sku; // restore the in-flight purchase after a redirect
@@ -250,6 +275,7 @@
       catalog = cat.products ?? catalog;
       if (!selectedSku) selectedSku = catalog[0]?.sku ?? "";
       if (me.identity !== "proof") { keys = await ensureHolderKeys(); credential = loadWalletForCurrentIssuer(); }
+      await loadExhibit(); // gated: the mount-time fetch 401'd, so get it now
       refreshOrders();
       logLine("Unlocked.", "ok");
     } else if (r?.retryAfter) {
@@ -398,9 +424,17 @@
   async function reset() {
     busy = true;
     try {
+      // Invalidate any /api/me poll already in flight FIRST. One issued before
+      // this call returns the pre-reset session, and landing afterwards it would
+      // restore `intent`/`verification` — putting the Pay card and a lit-up
+      // protocol flow right back, which reads as "Reset did nothing".
+      meGen++;
       await api("/api/reset", {});
       authSession = undefined; present = undefined; verification = undefined;
       intent = undefined; agentRun = undefined; didSettle = false; pasted = "";
+      // The Proof tab is client-side view state, so the server reset cannot
+      // touch it: without this, Reset from that tab changes nothing on screen.
+      proofPreview = false;
       // The browser-held credential is demo state too. Leaving it in place is
       // what made Reset look like a no-op: step 1 stayed green, the wallet card
       // stayed populated, and nothing visibly changed for anyone who had not
@@ -410,6 +444,11 @@
         credential = undefined;
         keys = await ensureHolderKeys(); // fresh holder key, not the cleared one
       }
+      // Clearing the transcript is part of "reset": a log still listing the
+      // mandate you just signed is the loudest signal on screen that nothing
+      // happened. (The merchant's order table deliberately survives — it is a
+      // global ledger shared with every other visitor, not your session.)
+      log = [];
       logLine("Reset — session cleared and the browser wallet emptied.", "info");
       await refreshMe();
     } finally { busy = false; }
