@@ -507,8 +507,8 @@
   </div>
 {:else}
 <div class="wrap">
-  <ThreeQuestions {exhibit} />
   <StartHere proofLiveReady={me.proofLiveReady === true} exhibitAvailable={exhibit?.available === true} />
+  <ThreeQuestions {exhibit} />
   <div class="flowbar">
     <span class="mut" style="font-size:12px">Wallet workflow</span>
     <div class="seg">
@@ -706,14 +706,17 @@
            orders only get interesting after a purchase. In the Proof tab the
            walkthrough on the left supersedes it, so it drops out entirely. -->
       {#if !proofPreview}<ProofExhibit {exhibit} />{/if}
-      <!-- In the Proof tab this rail is the ONLY card in the right column (the
+      <!-- Proof tab only. Here the rail is the ONLY card in this column (the
            exhibit is superseded by the walkthrough, and the verifier/mandate
-           cards are suppressed), while the walkthrough on the left runs long. So
-           it follows you down rather than leaving a tall empty column. -->
-      <div class="card {proofPreview ? 'sticky-rail' : ''}">
-        <h2>Protocol flow</h2>
-        <FlowViz steps={proofPreview ? proofSteps : steps} />
-      </div>
+           cards are suppressed) against a long walkthrough, so it stays put and
+           follows you down. In the interactive tabs it moves out of the grid
+           entirely — see the full-width row below. -->
+      {#if proofPreview}
+        <div class="card sticky-rail">
+          <h2>Protocol flow</h2>
+          <FlowViz steps={proofSteps} />
+        </div>
+      {/if}
       <!-- In the Proof tab, suppress the verification + Intent cards: they belong
            to YOUR interactive session, and a signed mandate sitting beside a
            walkthrough whose punchline is "this produces no mandate" reads as if
@@ -724,6 +727,16 @@
       />
     </div>
   </div>
+
+  <!-- The seven steps are the spine of the whole demo, so they get the whole
+       page rather than half of it. Horizontal at desktop widths; FlowViz falls
+       back to its vertical rail when the layout stacks. -->
+  {#if !proofPreview}
+    <div class="card fullrow">
+      <h2>Protocol flow</h2>
+      <FlowViz {steps} layout="horizontal" />
+    </div>
+  {/if}
 </div>
 {/if}
 
