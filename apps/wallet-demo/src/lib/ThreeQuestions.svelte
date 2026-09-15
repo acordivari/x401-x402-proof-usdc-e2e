@@ -45,7 +45,6 @@
           </div>
         </div>
       {/if}
-      <div class="sub mono">x401 presentation · SD-JWT-VC</div>
     </section>
 
     <section>
@@ -71,7 +70,6 @@
           {/if}
         </div>
       {/if}
-      <div class="sub mono">x5c chain → committed trust store</div>
     </section>
 
     <section class="third">
@@ -92,11 +90,11 @@
           {/if}
         </div>
       {/if}
-      <div class="sub mono">transaction_data in the key-binding JWT</div>
       <p class="punch">
-        This is the question the rails skip. <b>x402</b> moves money but is
-        identity-agnostic. <b>AP2</b> defines the mandate chain and leaves identity
-        binding to integrators. Answering it is what this project is for.
+        This is the question today's payment rails skip. The protocol that moves the
+        money (<b>x402</b>) never asks who you are. Google's agent-payments protocol
+        (<b>AP2</b>) describes how to record what was agreed — then leaves proving
+        <i>who agreed</i> to whoever builds it. Answering that is what this project is for.
       </p>
     </section>
   </div>
@@ -136,8 +134,9 @@
       <ul>
         <li>
           <b>A verifier that asks.</b> No merchant today requires which verified human approved a
-          spend, or under what cap. Mock-VeryGood-RX here stands in for the verifier neither x402
-          nor AP2 specifies — that is the dependency, and it is the interesting part.
+          spend, or under what cap. Mock-VeryGood-RX here stands in for the verifier that
+          neither of those protocols specifies — that is the dependency, and it is the
+          interesting part.
         </li>
         <li>
           <b>An assurance level.</b> The credential says <i>who</i> vouched, not <i>how
@@ -175,7 +174,6 @@
   .tiny { font-size: 11px; line-height: 1.45; }
   .hi { margin-top: 6px; color: var(--ok); }
   .hi :global(b) { color: var(--ok); }
-  .sub { font-size: 11px; color: var(--mut); opacity: 0.8; }
   .punch {
     margin-top: 10px !important;
     padding-top: 9px;
