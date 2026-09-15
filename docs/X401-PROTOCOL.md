@@ -171,28 +171,45 @@ non-200, ambiguous), the spend is denied. (See ARCHITECTURE.md §8.)
 
 ### Orchestrator session model (who may spend a mandate)
 
-The demo orchestrator is **per-client isolated** and **gated**: each browser gets a
+The demo orchestrator is **per-client isolated** in every posture: each browser gets a
 signed, HttpOnly `SameSite=Lax` session cookie, and all per-client state (`flow`,
 the in-flight x401 attempt, the issued `intent`) lives in that session — so one
-client can never see or spend another's mandate. A shared `DEMO_AUTH_TOKEN` gates
-every state/spend endpoint (`POST /api/login`, timing-safe compare); it's **open in
-local dev** (no token) and **fails closed** when exposed (`NODE_ENV=production` or
-`DEMO_REQUIRE_AUTH=true` ⇒ refuse to boot without a token + `DEMO_SESSION_SECRET`),
-mirroring the `X401_ENCRYPTOR_KEY` guard. `SameSite=Lax` is the CSRF mitigation.
-For a **public** demo the gate takes a second, deliberately publishable credential,
-`DEMO_PUBLIC_TOKEN`: when set, `GET /api/me` returns it pre-auth (the only field it
-serves beyond gate status), the login screen renders it with a copy button and a
-shareable `<origin>/#token=…` unlock link, and it draws on its own looser throttle
-(60/min/IP vs 10) because a printed token is not one anyone has to guess. The
-fragment carries the token client-side only — never into a query string, proxy log,
-or `Referer`. `DEMO_AUTH_TOKEN` stays private and independently rotatable. This is
-sound only because the orchestrator **cannot move value** — the agent signer is a
-throwaway key generated at boot and the facilitator is hard-wired to `mock` — so
-config **refuses to boot** if the published token equals the private one, stands
-without one, or is combined with `PROOF_MODE=live` (which would let any visitor
-spend the operator's Proof credentials).
+client can never see or spend another's mandate. Isolation is the cookie's job, not
+the gate's, and it is unaffected by how access is configured. `SameSite=Lax` is the
+CSRF mitigation.
+
+Access itself has three postures. **Local dev** is open (no token, nothing to set).
+**Gated** sets a shared `DEMO_AUTH_TOKEN` in front of every state/spend endpoint
+(`POST /api/login`, timing-safe compare, 10 attempts/min/IP). **Open**
+(`DEMO_OPEN_ACCESS=true`) removes the gate entirely, so a public visitor lands on a
+working demo with nothing to copy — the posture the hosted demo runs in. Exposure
+(`NODE_ENV=production` or `DEMO_REQUIRE_AUTH=true`) is a separate axis that turns on
+fail-closed secrets, `Secure` cookies and HSTS; exposed with **neither** a token nor
+the open flag **refuses to boot**, mirroring the `X401_ENCRYPTOR_KEY` guard.
+
+Going open is sound only because the orchestrator **cannot move value** — the agent
+signer is a throwaway key generated at boot and the facilitator is hard-wired to
+`mock` — and config keeps it that way by **refusing to boot** when `DEMO_OPEN_ACCESS`
+is combined with `PROOF_MODE=live` (which would let any visitor spend the operator's
+Proof credentials) or with either token, since a credential that no longer gates
+anything reads like protection that isn't there. Two properties move with the gate:
+state-changing `/api/*` calls take a 120/min/IP cap (GETs exempt — the UI polls
+them) now that the login throttle no longer stands in front of the signing and
+verification routes, and session rows are persisted only once a request actually
+mutates one, so a crawler cannot fill the store by sweeping an ungated demo.
+
+`DEMO_PUBLIC_TOKEN` remains as the halfway house: a second, deliberately publishable
+credential that `GET /api/me` returns pre-auth (the only field it serves beyond gate
+status) so the login screen can render it with a copy button and a shareable
+`<origin>/#token=…` unlock link, on its own looser throttle (60/min/IP) because a
+printed token is not one anyone has to guess. The fragment carries the token
+client-side only — never into a query string, proxy log, or `Referer`. It keeps
+`DEMO_AUTH_TOKEN` private and independently rotatable, and is subject to the same
+boot refusals. For a genuinely public demo `DEMO_OPEN_ACCESS` supersedes it: the
+visitor never handles a token at all.
 Tests: `test/e2e-demo-server.test.ts` (isolation), `test/e2e-demo-auth.test.ts`
-(gate + published token + fail-closed). Note: the agent wallet is shared infrastructure; isolation of
+(gate + published token + fail-closed), `test/e2e-demo-open.test.ts` (open posture,
+write cap, boot refusals). Note: the agent wallet is shared infrastructure; isolation of
 *authority* holds because each session holds only its own `intent`. The in-memory
 session store is single-process (fine for the demo; a real deployment would back it
 with a shared store).

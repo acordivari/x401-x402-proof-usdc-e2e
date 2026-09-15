@@ -191,7 +191,7 @@ catalog-price fix above).
 | x401 + Proof VC identity (DCQL selective disclosure + payment binding) → HAM | ✅ (offline; `packages/credentials`, `apps/wallet-demo`) |
 | Three wallet workflows + **delegated** (autonomous) mandate w/ cumulative-cap enforcement | ✅ (`WALLET_FLOW`, `/api/agent/run`; `e2e-delegated`) |
 | Mandate **revocation** (issuer kills a standing Intent; merchant refuses) | ✅ in-process **and** HTTP issuer-status channel, fail-closed (`REVOCATION_MODE`; `e2e-revocation`) |
-| Orchestrator auth + per-client session isolation | ✅ (signed-cookie sessions + token gate; `e2e-demo-auth`) |
+| Orchestrator access control + per-client session isolation | ✅ signed-cookie sessions, isolated in every posture; gated (`DEMO_AUTH_TOKEN`) or deliberately open (`DEMO_OPEN_ACCESS`, + a 120/min/IP write cap), fail-closed if exposed with neither (`e2e-demo-auth`, `e2e-demo-open`) |
 | **Live** Base Sepolia settlement | ⏳ needs free CDP key + faucet USDC |
 | **Real** Auth0 identity | ⏳ one-line `auth0Verifier` swap + tenant creds |
 | **Live** Proof VC presentation | ⏳ `PROOF_MODE=live` + Proof OAuth app (`PROOF_CLIENT_ID`, registered redirect URI, sandbox user email) |

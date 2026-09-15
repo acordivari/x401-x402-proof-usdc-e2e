@@ -23,7 +23,8 @@ services:
     branch: main
     buildCommand: npm ci --include=dev && npm run build:web
     startCommand: npm run demo:server
-    # Cheap and unauthenticated by design: reports {authRequired, authed} only.
+    # Cheap by design. Under DEMO_OPEN_ACCESS it serves the full status payload,
+    # which is the point — there is nothing gated left for it to withhold.
     healthCheckPath: /api/me
     envVars:
       - key: NODE_VERSION
@@ -33,30 +34,36 @@ services:
       - key: NODE_ENV
         value: production
 
-      # --- required secrets, all three fail-closed: the orchestrator refuses to
-      #     boot without them. ---
+      # --- ACCESS: deliberately OPEN. No login screen, no token to copy — a
+      #     visitor lands on a working demo. This is an explicit opt-in, not a
+      #     default: with NODE_ENV=production and neither DEMO_OPEN_ACCESS nor
+      #     DEMO_AUTH_TOKEN, the orchestrator refuses to boot rather than come
+      #     up unprotected by accident.
       #
-      # DEMO_AUTH_TOKEN is the one YOU have to know — it's the login token typed
-      # into the UI — so it is sync:false (Render prompts for it at blueprint
-      # deploy) rather than generateValue. A generated value would depend on
-      # reading a concealed secret back out of the dashboard, which is not a
-      # documented capability; getting that wrong locks you out of your own demo.
-      # Generate one yourself:  openssl rand -base64 32
-      - key: DEMO_AUTH_TOKEN # shared access token; POST /api/login {token}
-        sync: false
-      # OPTIONAL, and the one env var here that is meant to be PUBLIC. Set it and
-      # the login screen displays that token with a copy button plus a shareable
-      # `https://<your-service>/#token=...` link, so a visitor can start the demo
-      # without you handing out DEMO_AUTH_TOKEN. Safe here because this service
-      # cannot move value: the agent signer is a throwaway key generated at boot
-      # and the facilitator is hard-wired to "mock". config.ts refuses to boot if
-      # it equals DEMO_AUTH_TOKEN or is combined with PROOF_MODE=live (which would
-      # let any visitor spend your Proof credentials). Delete this entry to take
-      # the demo private again — DEMO_AUTH_TOKEN keeps working untouched.
-      - key: DEMO_PUBLIC_TOKEN
-        sync: false
-      # These two are server-only — nothing ever needs to read them back, so
-      # letting Render mint them is strictly better than choosing them by hand.
+      #     Safe here for the same reason the old published token was: this
+      #     service cannot move value. The agent signer is a throwaway key
+      #     generated at boot and the facilitator is hard-wired to "mock", so a
+      #     visitor buys mock inventory with mock settlement. config.ts enforces
+      #     that — it refuses to boot with DEMO_OPEN_ACCESS alongside
+      #     PROOF_MODE=live (which would let any visitor spend the org's Proof
+      #     credentials), and alongside either token, so a leftover credential
+      #     can never sit here looking like protection that isn't there.
+      #
+      #     MIGRATING FROM THE GATED DEPLOY: removing these keys from this file
+      #     does NOT remove them from the service. Delete DEMO_AUTH_TOKEN and
+      #     DEMO_PUBLIC_TOKEN in the Render dashboard (Environment), or the boot
+      #     will fail with exactly that complaint. To take the demo private
+      #     again, drop DEMO_OPEN_ACCESS and re-add DEMO_AUTH_TOKEN.
+      #
+      #     State-changing /api/* calls are capped at 120/min/IP in this mode
+      #     (see PUBLIC_WRITE_MAX_PER_MIN); GETs are exempt because the UI polls
+      #     /api/orders and /api/me on a timer.
+      - key: DEMO_OPEN_ACCESS
+        value: "true"
+
+      # --- required secrets, both fail-closed: the orchestrator refuses to boot
+      #     without them. Server-only — nothing ever needs to read them back, so
+      #     letting Render mint them beats choosing them by hand. ---
       - key: DEMO_SESSION_SECRET # signs the session cookie; stable => sessions survive redeploys
         generateValue: true
       - key: X401_ENCRYPTOR_KEY # authenticates the challenge state sealing the payment binding
@@ -103,7 +110,7 @@ services:
       #
       # Note this needs no Proof credentials at all: the SDK's verify half pins
       # to a trust store that ships in the package, so PROOF_MODE stays `local`,
-      # the service holds no Proof secret, and DEMO_PUBLIC_TOKEN stays legal.
+      # the service holds no Proof secret, and DEMO_OPEN_ACCESS stays legal.
       #
       # Absolute on purpose. Render exposes every secret file at
       # /etc/secrets/<filename> at runtime, always; the copy in the service root

@@ -82,7 +82,10 @@ IntentMandate (`.live-mandate.json`) that `live:buy` verifies and enforces; spen
 `.live-spend.json`. Both files are gitignored — never commit them.
 
 Env template: `.env.example` documents every mode/secret, including the fail-closed
-`X401_ENCRYPTOR_KEY` and demo auth-gate (`DEMO_AUTH_TOKEN`/`DEMO_SESSION_SECRET`) semantics.
+`X401_ENCRYPTOR_KEY` and the three orchestrator access postures — local-dev open, gated
+(`DEMO_AUTH_TOKEN`/`DEMO_SESSION_SECRET`), and deliberately public (`DEMO_OPEN_ACCESS`).
+Exposed with neither a token nor the open flag refuses to boot, and `DEMO_OPEN_ACCESS`
+refuses to coexist with `PROOF_MODE=live` or with either token.
 
 ## Upstream x401 reference policy
 

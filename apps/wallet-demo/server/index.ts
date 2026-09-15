@@ -143,6 +143,20 @@ const LOGIN_MAX_ATTEMPTS = 10;
 const PUBLIC_LOGIN_MAX_ATTEMPTS = 60;
 /** Bound the per-IP maps under a distributed flood; entries are 60s-lived anyway. */
 const LOGIN_MAP_PRUNE_AT = 5_000;
+/**
+ * Per-IP cap on STATE-CHANGING /api/* calls, for an ungated public deployment.
+ * With a gate, the login throttle was the only limiter the app needed — you
+ * could not reach the expensive routes without a token. Open access removes
+ * that, leaving `/api/authorize/start|complete`, `/api/wallet/issue` and
+ * `/api/agent/run` (SD-JWT signing and verification) reachable by anyone.
+ *
+ * Deliberately generous: a full walkthrough is well under a dozen POSTs, so 120
+ * a minute leaves room for several runs and for a handful of people sharing one
+ * NAT, while still holding a scripted flood to ~2 writes/sec/IP. GETs are
+ * exempt — the UI polls /api/orders and /api/me on a timer, which would eat any
+ * budget a human needs, and they do no crypto and mutate nothing.
+ */
+const PUBLIC_WRITE_MAX_PER_MIN = 120;
 
 // --- Baseline security headers. Hand-rolled (no helmet) to keep the dependency
 //     surface small. CSP notes: the Vite bundle is external JS + CSS, so
@@ -425,6 +439,15 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
   ).products;
   const findProduct = (sku: string) => catalog.find((p) => p.sku === sku);
   console.log(`[demo] merchant on ${merchantUrl} (mandate enforcement ON) · PROOF_MODE=${MODE}`);
+  // State the access posture out loud. "Is the demo gated right now?" is
+  // otherwise only answerable by reading the env of a running instance.
+  console.log(
+    authRequired
+      ? `[demo] access: token gate ON${cfg.publicToken ? " (with a published token on the login screen)" : ""}`
+      : cfg.openAccess
+        ? "[demo] access: OPEN — no gate, anyone with the URL is a user (DEMO_OPEN_ACCESS=true)"
+        : "[demo] access: open (local dev — no DEMO_AUTH_TOKEN set)",
+  );
 
   // --- per-client session isolation + access gate (F1); posture resolved above ---
   // Session store (the swappable seam): in-memory (default) or durable file.
@@ -447,14 +470,19 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
       if (!sess || !sid) {
         sid = randomUUID();
         sess = newSession();
-        // PERSIST only what is worth persisting. With the gate on, an
-        // unauthenticated caller gets a cookie but NO server-side row — otherwise
+        // PERSIST only what is worth persisting: a freshly minted session is
+        // pure defaults, so it gets a cookie but NO server-side row. Otherwise
         // every cookie-less request (a flood of them included) would allocate a
         // session for the full idle TTL, and under the file store rewrite the
-        // entire session file each time. Once /api/login succeeds, the finish
-        // hook below stores it. With the gate off (local dev) newSession() is
-        // already authed, so behavior is unchanged.
-        if (sess.authed) await sessionStore.set(sid, sess);
+        // entire session file each time. The finish hook below stores it the
+        // moment something actually mutates it — and only non-GET routes do.
+        //
+        // This used to be conditional on `sess.authed`, which made the gate
+        // itself the thing holding the flood back. With open access that
+        // condition is always true, so the suppression has to live here instead:
+        // a crawler sweeping an ungated demo must not be able to fill the store.
+        // Cost is one extra cookie re-issue before a visitor's first POST, when
+        // there is by definition nothing to remember.
         const attrs = `HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secureCookie ? "; Secure" : ""}`;
         res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${encodeURIComponent(signSid(sid, sessionSecret))}; ${attrs}`);
       }
@@ -502,12 +530,25 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
   }
   const loginRetryAfter = (ip: string) => retryAfterFor(loginAttempts, ip, LOGIN_MAX_ATTEMPTS);
 
+  /** Per-IP write counters — only installed when the demo is public AND ungated. */
+  const writeAttempts = new Map<string, { count: number; resetAt: number }>();
+  const writeLimiter: RequestHandler = (req, res, next) => {
+    if (req.method === "GET" || !req.path.startsWith("/api/")) return next();
+    const retryAfter = retryAfterFor(writeAttempts, req.ip ?? "unknown", PUBLIC_WRITE_MAX_PER_MIN);
+    if (retryAfter > 0) {
+      res.setHeader("Retry-After", String(retryAfter));
+      return res.status(429).json({ error: "too many requests", retryAfter });
+    }
+    next();
+  };
+
   // Evict idle sessions to bound memory (unref'd so it never holds the process open).
   const sweep = setInterval(() => {
     void sessionStore.sweep(SESSION_TTL_MS);
     const now = Date.now();
     for (const [ip, rec] of loginAttempts) if (now >= rec.resetAt) loginAttempts.delete(ip);
     for (const [ip, rec] of publicLoginAttempts) if (now >= rec.resetAt) publicLoginAttempts.delete(ip);
+    for (const [ip, rec] of writeAttempts) if (now >= rec.resetAt) writeAttempts.delete(ip);
   }, Math.min(SESSION_TTL_MS, 600_000));
   sweep.unref();
 
@@ -553,6 +594,10 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
   app.use(express.json({ limit: "1mb" }));
   app.use(express.static(publicDir));
   app.use(sessionMiddleware);
+  // Exactly one of these is load-bearing at a time. Gated: the token is the
+  // limiter, and /api/login has its own. Ungated and public: nothing else
+  // stands between the internet and the crypto routes.
+  if (cfg.exposed && !authRequired) app.use(writeLimiter);
   app.use(gate);
 
   // --- access gate: exchange the shared token for an authenticated session ---

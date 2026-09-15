@@ -56,7 +56,13 @@ export interface DemoConfig {
   sessionTtlMs: number;
   /** Exposed posture (NODE_ENV=production or DEMO_REQUIRE_AUTH=true): fail closed, Secure cookies. */
   exposed: boolean;
-  /** Shared access token; undefined => gate disabled (local dev only). */
+  /**
+   * Deliberately gate-less: anyone with the URL is a user, no token screen. The
+   * operator opts in explicitly (DEMO_OPEN_ACCESS=true) — an exposed boot with
+   * neither a token nor this flag still refuses to start.
+   */
+  openAccess: boolean;
+  /** Shared access token; undefined => gate disabled (local dev, or open access). */
   authToken?: string;
   /**
    * A SECOND, deliberately publishable token. When set, the gate screen renders
@@ -133,12 +139,20 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
     }
     return DEV_ENCRYPTOR_KEY;
   })();
+  // The deliberate escape hatch from the gate. It does NOT change the posture:
+  // NODE_ENV/DEMO_REQUIRE_AUTH still decide fail-closed secrets and Secure
+  // cookies, so an open deployment keeps every other guard. All it removes is
+  // the token screen — defensible for exactly the reason the published token
+  // was: this orchestrator cannot move value (mock facilitator, throwaway agent
+  // key). The checks below keep it that way.
+  const openAccess = env.DEMO_OPEN_ACCESS === "true";
   const authToken = (() => {
     if (env.DEMO_AUTH_TOKEN) return env.DEMO_AUTH_TOKEN;
-    if (exposed) {
+    if (exposed && !openAccess) {
       throw new Error(
         "DEMO_AUTH_TOKEN must be set when NODE_ENV=production or DEMO_REQUIRE_AUTH=true — " +
-          "refusing to boot the orchestrator with no authentication.",
+          "refusing to boot the orchestrator with no authentication. To run the demo " +
+          "deliberately open to the public instead, set DEMO_OPEN_ACCESS=true.",
       );
     }
     return undefined;
@@ -150,6 +164,33 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
     }
     return randomUUID(); // ephemeral: sessions simply don't survive a restart in local dev
   })();
+  // Open access contradictions. Both are refusals rather than silent wins: a
+  // token left in the environment while the gate is off is either a dead
+  // credential the operator still believes is protecting them, or a gate they
+  // meant to remove and didn't. Failing the boot is the only way they find out.
+  if (openAccess) {
+    if (env.DEMO_AUTH_TOKEN) {
+      throw new Error(
+        "DEMO_OPEN_ACCESS=true cannot be combined with DEMO_AUTH_TOKEN — the demo is either " +
+          "gated or open, and a token that no longer gates anything reads like protection " +
+          "that isn't there. Unset DEMO_AUTH_TOKEN to go open, or unset DEMO_OPEN_ACCESS.",
+      );
+    }
+    if (env.DEMO_PUBLIC_TOKEN) {
+      throw new Error(
+        "DEMO_OPEN_ACCESS=true cannot be combined with DEMO_PUBLIC_TOKEN — the published " +
+          "token exists only to let visitors through a gate. With no gate it is dead " +
+          "configuration. Unset DEMO_PUBLIC_TOKEN.",
+      );
+    }
+    if (mode === "live") {
+      throw new Error(
+        "DEMO_OPEN_ACCESS=true cannot be combined with PROOF_MODE=live — an ungated demo lets " +
+          "any visitor spend the org's Proof credentials and start real verification sessions. " +
+          "Unset DEMO_OPEN_ACCESS, or run the public demo on PROOF_MODE=local.",
+      );
+    }
+  }
   // The publishable half of the gate. Displaying a token is only defensible
   // because this orchestrator cannot move value: the agent signer is a freshly
   // generated throwaway key and the facilitator is hard-wired to "mock" (see
@@ -221,6 +262,7 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
     sessionFile: env.SESSION_FILE ?? path.join(os.tmpdir(), "agentic-payments-sessions.json"),
     sessionTtlMs: Number(env.DEMO_SESSION_TTL_MS ?? 3_600_000), // 1h idle
     exposed,
+    openAccess,
     ...(authToken !== undefined ? { authToken } : {}),
     ...(publicToken !== undefined ? { publicToken } : {}),
     sessionSecret,
