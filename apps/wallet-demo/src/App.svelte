@@ -459,7 +459,7 @@
 <header class="top">
   <div>
     <h1>Who is this? Says who? Did they authorize <i>this</i>?</h1>
-    <p>Every business interaction with a person on the internet answers those three questions. An agent paying on your behalf has to answer them too — and the third one is the one today's payment rails skip. This demo makes all three visible.</p>
+    <p>Every business interaction with a person answers these three. An agent paying on your behalf has to answer them too — and the third is the one today's rails skip.</p>
   </div>
   <div class="row">
     <span class="pill" title="x401 identity presentation · x402 payment rail · HAM authorization mandate">x401 · x402 · HAM</span>
@@ -551,7 +551,7 @@
       <div class="card">
         <h2><span class="step">1</span> Wallet</h2>
         {#if proofIdentity}
-          <p class="note">Proof-hosted: the credential lives in your <b>Proof</b> wallet. Selective disclosure happens on Proof's hosted flow (driven by <span class="mono">@proof.com/proof-vc-server</span>); we decode the returned presentation to visualize it.</p>
+          <p class="note">The credential lives in your <b>Proof</b> wallet, and selective disclosure happens on Proof's hosted flow (<span class="mono">@proof.com/proof-vc-server</span>). We decode what comes back to visualize it.</p>
         {:else}
           <div class="row spread">
             <div class="row">
@@ -569,7 +569,7 @@
                 <span class="chip-claim" title="held, selectively disclosable">{c}: <b style="margin-left:4px">{String(DEMO_HOLDERS[persona]?.[c] ?? "•")}</b></span>
               {/each}
             </div>
-            <p class="note" style="margin:10px 0 0">SD-JWT-VC held in this browser. Holder key bound via <span class="mono">cnf</span>; every claim is independently disclosable.</p>
+            <p class="note" style="margin:10px 0 0">SD-JWT-VC held in this browser, holder key bound via <span class="mono">cnf</span>. Every claim is independently disclosable.</p>
           {/if}
         {/if}
       </div>
@@ -577,7 +577,7 @@
       <div class="card">
         {#if delegated}
           <h2><span class="step">2</span> Grant a standing mandate &amp; what to disclose</h2>
-          <p class="note" style="margin:0 0 10px">Authorize <b>once</b>: the human's presentation signs a budget the agent then spends autonomously — no per-purchase approval. The signed Intent (allowlist + cap + expiry) is the standing authorization.</p>
+          <p class="note" style="margin:0 0 10px">Authorize <b>once</b>: the presentation signs a budget the agent then spends on its own. The signed Intent — allowlist, cap, expiry — is the standing authorization.</p>
           <div class="row spread">
             <div class="row"><span class="mut">Budget (USDC)</span><input type="number" step="0.25" bind:value={budgetUsd} min="0.25" style="width:100px" /></div>
             <span class="pill">expires in {Math.round((me.mandateTtl ?? 86400) / 3600)}h</span>
@@ -627,7 +627,7 @@
             {/if}
             <button style="margin-top:12px" onclick={approveLocal} disabled={busy || !!present}>Approve &amp; present</button>
           {:else}
-            <p class="note">Approve the presentation in the Proof window. If the demo's callback is registered as your redirect URI it returns automatically; otherwise copy the URL Proof lands on (it contains <span class="mono">#vp_token=…</span>) and paste it below.</p>
+            <p class="note">Approve in the Proof window. It returns automatically if this demo's callback is your registered redirect URI; otherwise paste the URL Proof lands on (it contains <span class="mono">#vp_token=…</span>) below.</p>
             <div style="margin:8px 0">
               <proof-verify-id bind:this={proofBtn} theme="primary" size="medium"></proof-verify-id>
               <span class="mut" style="font-size:12px;margin-left:8px">official Proof button (proof-vc-web), if the popup was blocked</span>

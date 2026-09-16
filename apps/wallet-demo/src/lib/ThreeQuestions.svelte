@@ -51,7 +51,7 @@
       <h3>Says who?</h3>
       <p>
         <b>Proof</b> — not the person vouching for themselves. The credential carries a
-        certificate chain anyone can check independently.
+        certificate chain anyone can check.
       </p>
       {#if have && cert}
         <div class="ev">
@@ -91,10 +91,9 @@
         </div>
       {/if}
       <p class="punch">
-        This is the question today's payment rails skip. The protocol that moves the
-        money (<b>x402</b>) never asks who you are. Google's agent-payments protocol
-        (<b>AP2</b>) describes how to record what was agreed — then leaves proving
-        <i>who agreed</i> to whoever builds it. Answering that is what this project is for.
+        The question today's rails skip. <b>x402</b> moves the money but never asks who you
+        are. Google's <b>AP2</b> records what was agreed, then leaves proving <i>who agreed</i>
+        to whoever builds it. Answering that is what this project is for.
       </p>
     </section>
   </div>
@@ -108,23 +107,18 @@
         {#if have}
           <li>A credential <b>Proof issued to a real person</b>, presented once and captured.</li>
           <li>
-            A chain to Proof's CA — verified on this page load
-            {#if offline && !offline.proofSecretHeld}<b>without contacting Proof</b>{/if}.
+            A chain to Proof's CA — verified on this page load{#if offline && !offline.proofSecretHeld}, <b>without contacting Proof</b>{/if}.
           </li>
           <li>
             Selective disclosure: <b>{disc.disclosedCount} of {disc.totalSdClaims}</b> attributes
             revealed, {disc.withheldCount} held back as salted hashes.
           </li>
           <li>
-            A payment of <b>{usd(exhibit.payment?.amount)}</b> sealed into the presentation the
-            human signed.
+            A payment of <b>{usd(exhibit.payment?.amount)}</b> sealed into what the human signed.
           </li>
         {:else}
           <li>The protocol plumbing — presentation, selective disclosure, payment binding, mandate.</li>
-          <li>
-            This deployment carries <b>no recorded Proof credential</b>, so the credential you
-            use here is one you mint yourself.
-          </li>
+          <li>No recorded Proof credential on this deployment, so the one you use here you mint yourself.</li>
         {/if}
       </ul>
     </section>
@@ -134,14 +128,13 @@
       <ul>
         <li>
           <b>A verifier that asks.</b> No merchant today requires which verified human approved a
-          spend, or under what cap. Mock-VeryGood-RX here stands in for the verifier that
-          neither of those protocols specifies — that is the dependency, and it is the
-          interesting part.
+          spend, or under what cap. Mock VeryGood-RX stands in for the verifier neither protocol
+          specifies — that's the dependency, and the interesting part.
         </li>
         <li>
-          <b>An assurance level.</b> The credential says <i>who</i> vouched, not <i>how
-          rigorously</i>. It carries no IAL/AAL claim — so you learn it was Proof, not what Proof
-          checked.
+          <b>An assurance level that travels.</b> Proof's own proofing carries a certified
+          assurance level; this token doesn't. With no IAL/AAL claim in it, a verifier learns it
+          was Proof — not what Proof checked.
         </li>
       </ul>
     </section>

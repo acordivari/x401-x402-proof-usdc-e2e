@@ -40,10 +40,9 @@
     </h2>
 
     <p class="note" style="margin:0 0 12px">
-      The credential you mint above is real cryptography, but you vouched for yourself. This
-      one was issued by <b>Proof</b> to a real person who completed identity verification —
-      re-verified by this server every time you load the page.
-      <b>Open the “Proof wallet” tab</b> to walk through it step by step.
+      The credential you mint above is real cryptography, but you vouched for yourself.
+      <b>Proof</b> issued this one to a real person who completed identity verification —
+      re-verified on every page load. <b>Open the “Proof wallet” tab</b> to walk through it.
     </p>
 
     <!-- The two verifications. The second one is the point. -->
@@ -70,9 +69,9 @@
     </div>
 
     <p class="note" style="margin:10px 0 0">
-      That second line is the safety property, not a bug. A presentation is key-bound to the
-      single-use nonce it was made for, so this verifies as a <b>historical fact</b> and is
-      worthless as authorization — which is exactly why it is safe to publish.
+      That second line is the safety property, not a bug. Key-bound to a single-use nonce, this
+      verifies as a <b>historical fact</b> and is worthless as authorization — which is why it's
+      safe to publish.
     </p>
 
     <div class="divider"></div>
@@ -113,7 +112,7 @@
       </div>
       <p class="note" style="margin:8px 0 0">
         Settlement quotes USDC ({usd(exhibit.payment?.amount)}); Proof's mandate records the
-        fiat-denominated figure the human was shown.
+        fiat figure the human was shown.
       </p>
     {/if}
 
@@ -138,9 +137,8 @@
         Raw vp_token — verify it yourself rather than trusting this page
       </summary>
       <p class="note" style="margin:8px 0">
-        Decode it and you will find the issuer JWT, one disclosure per revealed attribute,
-        the salted hashes of the withheld ones, and the holder's key-binding JWT over the
-        recorded nonce.
+        Inside: the issuer JWT, one disclosure per revealed attribute, salted hashes of the
+        withheld ones, and the holder's key-binding JWT over the recorded nonce.
       </p>
       <textarea class="mono" readonly rows="6" style="width:100%;font-size:10.5px"
         >{exhibit.vpToken}</textarea>

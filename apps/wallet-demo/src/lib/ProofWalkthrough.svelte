@@ -50,11 +50,9 @@
   </h2>
 
   <p class="note" style="margin:0 0 14px">
-    Everywhere else in this demo you mint your own credential — real cryptography, but you are
-    vouching for yourself. This one was issued by <b>Proof</b> to a real person who completed
-    identity verification, presented once against a payment, and captured. You cannot do this
-    yourself here without going through Proof's verification, so instead: the genuine article,
-    re-checked by this server on every page load.
+    Everywhere else you mint your own credential — real cryptography, but you're vouching for
+    yourself. <b>Proof</b> issued this one to a real person who completed identity verification,
+    presented once against a payment. Re-checked by this server on every page load.
   </p>
 
   <div class="steps">
@@ -92,10 +90,9 @@
         {/if}
         <p class="why">
           Approved on <b>Proof's own screen</b>, then sealed into the holder-signed key-binding
-          JWT as <span class="mono">{exhibit.transactionDataType ?? "a payment mandate"}</span>.
-          That binding is what makes this proof of <i>this</i> payment rather than proof of
-          some payment. Settlement quotes USDC ({usd(exhibit.payment?.amount)}); the mandate
-          records the figure the human actually saw.
+          JWT as <span class="mono">{exhibit.transactionDataType ?? "a payment mandate"}</span> —
+          what makes this proof of <i>this</i> payment, not some payment. Settlement quotes USDC
+          ({usd(exhibit.payment?.amount)}); the mandate records what the human actually saw.
         </p>
       </div>
     </div>
@@ -153,10 +150,10 @@
         </div>
         <p class="why">
           {#if offline && !offline.proofSecretHeld}
-            This server holds <b>no Proof credential</b> and made <b>no call to Proof</b> to do
-            that — the chain was checked against a trust store shipped in the package. That is
-            the whole argument for a public certificate authority: anyone can verify on their
-            own, forever, without asking the issuer's permission or telling it who's asking.
+            This server holds <b>no Proof credential</b> and made <b>no call to Proof</b> — the
+            chain was checked against a trust store shipped in the package. That's the argument
+            for a public CA: anyone can verify, forever, without the issuer's permission or
+            telling it who's asking.
           {:else}
             The chain was checked against Proof's committed trust store rather than by calling
             an API — a verifier needs no relationship with the issuer.
@@ -201,11 +198,10 @@
   </div>
 
   <p class="note" style="margin:0 0 10px">
-    That second line is the safety property, not a bug. This presentation is key-bound to the
-    single-use challenge it was made for, so it verifies as a <b>historical fact</b> and is
-    worthless as authorization. It cannot pay for anything — here or anywhere — which is
-    precisely why it is safe to publish. It is the same replay gate protecting a live
-    presentation, which makes this a demonstration of the mechanism rather than a hole in it.
+    That second line is the safety property, not a bug. Key-bound to the single-use challenge it
+    was made for, this presentation verifies as a <b>historical fact</b> and is worthless as
+    authorization — it can't pay for anything, here or anywhere, which is why it's safe to
+    publish. Same replay gate that protects a live presentation.
   </p>
 
   <div class="gate">
