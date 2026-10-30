@@ -15,8 +15,12 @@
     "@agentic-payments/identity": "*",
     "@agentic-payments/merchant": "*",
     "@agentic-payments/shared": "*",
-    "@proof.com/proof-vc-web": "^0.3.1",
-    "express": "^4.21.2"
+    "@proof.com/proof-vc-web": "^0.6.0",
+    "@x402/core": "^2.16.0",
+    "@x402/evm": "^2.16.0",
+    "@x402/express": "^2.16.0",
+    "express": "^4.21.2",
+    "jose": "^6.2.12"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.0",

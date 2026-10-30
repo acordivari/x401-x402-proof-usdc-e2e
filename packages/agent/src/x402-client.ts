@@ -20,6 +20,8 @@ export interface X402ClientOptions {
    * preflight check and the paying retry.
    */
   policies?: PaymentPolicy[];
+  /** The fetch the payment wrapper sends through (e.g. a tracing fetch). Default: global fetch. */
+  baseFetch?: typeof fetch;
 }
 
 export async function createPayingFetch(
@@ -34,5 +36,5 @@ export async function createPayingFetch(
     ...(opts.policies ? { policies: opts.policies } : {}),
     ...(opts.rpcUrl ? { schemeOptions: { rpcUrl: opts.rpcUrl } } : {}),
   });
-  return wrapFetchWithPayment(fetch, client) as typeof fetch;
+  return wrapFetchWithPayment(opts.baseFetch ?? fetch, client) as typeof fetch;
 }

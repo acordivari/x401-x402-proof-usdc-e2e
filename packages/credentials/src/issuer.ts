@@ -5,7 +5,7 @@
  * exercises the exact verification path as a live Proof credential.
  */
 import { nowSeconds } from "@agentic-payments/shared";
-import type { DisclosureFrame } from "@sd-jwt/types";
+import type { DisclosureFrame } from "@sd-jwt/core";
 import { createSdJwtVc, type Jwk } from "./crypto.ts";
 import {
   PROOF_VCT,

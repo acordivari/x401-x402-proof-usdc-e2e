@@ -1,47 +1,47 @@
 {
   "_note": "Baseline for x401 spec/SDK drift. Regenerate deliberately with `npm run check:x401 -- --update` when you reconcile with a new spec/SDK version. See scripts/check-x401-spec.mjs and docs/X401-PROTOCOL.md.",
-  "checkedAt": "2026-07-23T04:43:11.139Z",
+  "checkedAt": "2026-10-25T05:13:08.653Z",
   "packages": {
     "@proof.com/x401-node": {
-      "declaredRange": "^0.3.0",
-      "installedVersion": "0.3.0",
+      "declaredRange": "^0.3.3",
+      "installedVersion": "0.3.3",
       "specVersion": "0.2.0",
-      "npmLatest": "0.3.0"
+      "npmLatest": "0.3.3"
     },
     "@proof.com/proof-vc-server": {
-      "declaredRange": "^0.3.1",
-      "installedVersion": "0.3.1",
+      "declaredRange": "^0.6.3",
+      "installedVersion": "0.6.3",
       "specVersion": null,
-      "npmLatest": "0.3.1"
+      "npmLatest": "0.6.3"
     },
     "@proof.com/proof-vc-web": {
-      "declaredRange": "^0.3.1",
-      "installedVersion": "0.3.1",
+      "declaredRange": "^0.6.0",
+      "installedVersion": "0.6.0",
       "specVersion": null,
-      "npmLatest": "0.3.1"
+      "npmLatest": "0.6.0"
     },
     "@proof.com/proof-vc-common": {
       "declaredRange": null,
-      "installedVersion": "0.3.1",
+      "installedVersion": "0.6.3",
       "specVersion": null,
-      "npmLatest": "0.3.1"
+      "npmLatest": "0.6.3"
     }
   },
   "repos": {
     "proof/x401": {
       "kind": "commit",
-      "ref": "f739b0e81c0e",
-      "date": "2026-07-01T18:09:43Z"
+      "ref": "7e864af97cd8",
+      "date": "2026-09-30T19:27:09Z"
     },
     "proof/x401-node": {
       "kind": "release",
-      "ref": "v0.3.0",
-      "date": "2026-06-30T08:19:39Z"
+      "ref": "v0.3.3",
+      "date": "2026-10-09T09:07:51Z"
     },
     "proof/proof-vc-common": {
       "kind": "release",
-      "ref": "v0.3.1",
-      "date": "2026-07-22T10:05:04Z"
+      "ref": "v0.6.3",
+      "date": "2026-10-19T14:15:21Z"
     }
   }
 }

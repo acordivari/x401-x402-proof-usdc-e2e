@@ -5,7 +5,7 @@
  * import), so tests can set env and then boot, and the fail-closed checks
  * (encryptor key, auth token, session secret) throw before any server listens.
  */
-import { randomUUID } from "node:crypto";
+import { createPrivateKey, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,6 +89,27 @@ export interface DemoConfig {
     /** Defaults (in the app) to the agent wallet when unset. */
     paymentInstrumentId?: string;
     paymentCurrency: string;
+  };
+  /**
+   * The LATEST variant (server/latest/): the merchant is the x401 verifier,
+   * identified by a CIMD hosted at `publicOrigin`. Live only on an explicit
+   * LATEST_PROOF_MODE=live, which refuses to boot unless it is complete;
+   * otherwise fully offline against the emulated Proof.
+   */
+  latest: {
+    mode: "local" | "live";
+    publicOrigin: string;
+    expectedOrigins: [string, ...string[]];
+    allowInsecureUri: boolean;
+    signatureBilling: "x402" | "account";
+    ageRestrictedCategories: string[];
+    sessionData: boolean;
+    proof: {
+      environment: "sandbox" | "production";
+      verifierPrivateJwk?: Record<string, unknown>;
+      loginHint?: string;
+      verifierEvmKey?: `0x${string}`;
+    };
   };
 }
 
@@ -234,7 +255,10 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
     );
   }
 
+  const latest = resolveLatestConfig(env, { exposed, openAccess, demoPort, proofEnvironment });
+
   return {
+    latest,
     merchantPayTo: (env.MERCHANT_PAY_TO ?? "0xc0ffee0000000000000000000000000000000000").toLowerCase() as `0x${string}`,
     merchantPort: Number(env.MERCHANT_PORT ?? 4052),
     demoPort,
@@ -280,6 +304,94 @@ export function resolveDemoConfig(env: NodeJS.ProcessEnv = process.env): DemoCon
         ? { paymentInstrumentId: env.PROOF_PAYMENT_INSTRUMENT_ID }
         : {}),
       paymentCurrency: env.PROOF_PAYMENT_CURRENCY ?? "USD",
+    },
+  };
+}
+
+/**
+ * Latest-variant config. Kept separate so the July resolution above reads
+ * exactly as it did. Live is its own explicit switch (LATEST_PROOF_MODE), not
+ * PROOF_MODE: July's live mode needs an OAuth app, this one an enrolled CIMD,
+ * and an operator who asked for one must never silently get an offline
+ * verifier that accepts self-issued credentials. Incomplete live config
+ * refuses to boot, in the same fail-closed style as the checks above.
+ */
+function resolveLatestConfig(
+  env: NodeJS.ProcessEnv,
+  ctx: { exposed: boolean; openAccess: boolean; demoPort: number; proofEnvironment: string },
+): DemoConfig["latest"] {
+  const rawOrigin = firstSet(env.PUBLIC_ORIGIN, env.RENDER_EXTERNAL_URL) ?? `http://localhost:${ctx.demoPort}`;
+  let publicOrigin: string;
+  try {
+    publicOrigin = new URL(rawOrigin).origin;
+  } catch {
+    throw new Error(`PUBLIC_ORIGIN must be an absolute URL (got "${rawOrigin}")`);
+  }
+  const extra = (env.LATEST_EXTRA_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+  // Local dev also admits the Vite dev server and the orchestrator's own port.
+  const dev = ctx.exposed ? [] : ["http://localhost:5173", `http://localhost:${ctx.demoPort}`];
+  const expectedOrigins = [...new Set([publicOrigin, ...extra, ...dev])] as [string, ...string[]];
+
+  const keyRaw = env.PROOF_VERIFIER_KEY;
+  let verifierPrivateJwk: Record<string, unknown> | undefined;
+  if (keyRaw) {
+    try {
+      verifierPrivateJwk = keyRaw.trim().startsWith("{")
+        ? (JSON.parse(keyRaw) as Record<string, unknown>)
+        : (createPrivateKey(keyRaw.replace(/\\n/g, "\n")).export({ format: "jwk" }) as Record<string, unknown>);
+    } catch (err) {
+      throw new Error(`PROOF_VERIFIER_KEY is not a P-256 private key (PEM or JWK): ${(err as Error).message}`);
+    }
+    if (verifierPrivateJwk.kty !== "EC" || verifierPrivateJwk.crv !== "P-256" || typeof verifierPrivateJwk.d !== "string") {
+      throw new Error("PROOF_VERIFIER_KEY must be an EC P-256 private key (openssl ecparam -name prime256v1 -genkey)");
+    }
+  }
+  const latestMode = env.LATEST_PROOF_MODE === "live" ? "live" : "local";
+  if (latestMode === "live") {
+    if (!verifierPrivateJwk) {
+      throw new Error("LATEST_PROOF_MODE=live needs PROOF_VERIFIER_KEY (the P-256 key published in the CIMD). Refusing to boot.");
+    }
+    if (!publicOrigin.startsWith("https://")) {
+      throw new Error(
+        `LATEST_PROOF_MODE=live needs an https PUBLIC_ORIGIN — Proof fetches the verifier's metadata from ` +
+          `${publicOrigin}/.well-known/proof-client.json. Refusing to boot.`,
+      );
+    }
+    if (ctx.openAccess) {
+      throw new Error(
+        "LATEST_PROOF_MODE=live cannot be combined with DEMO_OPEN_ACCESS=true — an ungated demo would let any visitor " +
+          "start real Proof presentations and spend the verifier's x402 wallet on signatures. Gate it with DEMO_AUTH_TOKEN.",
+      );
+    }
+    // A token printed on the login screen is open access by another name — the
+    // same refusal July's live mode makes.
+    if (env.DEMO_PUBLIC_TOKEN) {
+      throw new Error(
+        "LATEST_PROOF_MODE=live cannot be combined with DEMO_PUBLIC_TOKEN — a published token lets any visitor start real " +
+          "Proof presentations and spend the verifier's x402 wallet. Unset DEMO_PUBLIC_TOKEN and share DEMO_AUTH_TOKEN privately.",
+      );
+    }
+    if (ctx.proofEnvironment !== FAIRFAX_ENVIRONMENT) {
+      throw new Error(`Proof is pinned to the Fairfax sandbox: LATEST_PROOF_MODE=live needs PROOF_ENVIRONMENT="${FAIRFAX_ENVIRONMENT}".`);
+    }
+  }
+  const evm = env.PROOF_VERIFIER_EVM_KEY;
+  if (evm !== undefined && evm !== "" && !/^0x[0-9a-fA-F]{64}$/.test(evm)) {
+    throw new Error("PROOF_VERIFIER_EVM_KEY must be a 0x-prefixed 32-byte hex private key");
+  }
+  return {
+    mode: latestMode,
+    publicOrigin,
+    expectedOrigins,
+    allowInsecureUri: !ctx.exposed && publicOrigin.startsWith("http://"),
+    signatureBilling: env.LATEST_SIGNATURE_BILLING === "account" ? "account" : "x402",
+    ageRestrictedCategories: (env.LATEST_AGE_RESTRICTED ?? "otc-medicine").split(",").map((c) => c.trim()).filter(Boolean),
+    sessionData: env.LATEST_SESSION_DATA !== "false",
+    proof: {
+      environment: ctx.proofEnvironment === "production" ? "production" : "sandbox",
+      ...(verifierPrivateJwk ? { verifierPrivateJwk } : {}),
+      ...(env.PROOF_LOGIN_HINT ? { loginHint: env.PROOF_LOGIN_HINT } : {}),
+      ...(evm ? { verifierEvmKey: evm as `0x${string}` } : {}),
     },
   };
 }
