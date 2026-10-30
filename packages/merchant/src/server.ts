@@ -32,9 +32,14 @@ import { InMemorySpendLedger, type SpendLedger } from "./spend-ledger.ts";
 import { decodePaymentAuthorization } from "./x402-headers.ts";
 import { ucpProfileHandler } from "./ucp/profile.ts";
 import { createUcpCheckoutRouter } from "./ucp/checkout-routes.ts";
+import { X401_BUY_PREFIX, X401_TOKEN_PATH, createX401Gate } from "./x401/gate.ts";
 import type { MandateVerifier, RevocationChecker } from "@agentic-payments/identity";
+import type { X401VerifierV1 } from "@agentic-payments/credentials";
 
 export * from "./spend-ledger.ts";
+export { CATALOG, findProduct, productPriceAtomic, type Product } from "./catalog.ts";
+export { basketFor, summarizeProof, X401_BUY_PREFIX, X401_TOKEN_PATH, type X401Authorization } from "./x401/gate.ts";
+export { buildFacilitator, MockFacilitator } from "./facilitator/index.ts";
 
 export interface MerchantAppOptions {
   /** When set, /buy requires a signed Human Authorization Mandate (Phase 2). */
@@ -50,25 +55,39 @@ export interface MerchantAppOptions {
    * unaffected; requires mandateVerifier (the handler is HAM-secured only).
    */
   ucp?: { enabled: boolean; handlerSpecUrl?: string };
+  /**
+   * The latest x401 flow: the merchant is itself the verifier. When set,
+   * `/x401/buy/:sku` answers 401 + PROOF-REQUEST, `/x401/token` exchanges a
+   * Result Artifact for a Verification Token, and only then does the x402
+   * paywall run. Off by default — `/buy` never changes.
+   */
+  x401?: {
+    verifier: X401VerifierV1;
+    merchantName?: string;
+    sessionData?: boolean;
+    tokenTtlSeconds?: number;
+  };
 }
 
 const ORDER_HEADER = "idempotency-key";
 
 /** Build the priced x402 routes from the catalog (one static route per sku). */
-function buildRoutes(config: MerchantConfig): RoutesConfig {
+function buildRoutes(config: MerchantConfig, prefixes: string[] = ["/buy"]): RoutesConfig {
   const routes: Record<string, unknown> = {};
-  for (const p of CATALOG) {
-    routes[`GET /buy/${p.sku}`] = {
-      accepts: {
-        scheme: "exact",
-        payTo: config.payTo,
-        price: `$${p.priceUsd}`,
-        network: config.network,
-        maxTimeoutSeconds: 120,
-      },
-      description: p.name,
-      mimeType: "application/json",
-    };
+  for (const prefix of prefixes) {
+    for (const p of CATALOG) {
+      routes[`GET ${prefix}/${p.sku}`] = {
+        accepts: {
+          scheme: "exact",
+          payTo: config.payTo,
+          price: `$${p.priceUsd}`,
+          network: config.network,
+          maxTimeoutSeconds: 120,
+        },
+        description: p.name,
+        mimeType: "application/json",
+      };
+    }
   }
   return routes as RoutesConfig;
 }
@@ -172,11 +191,34 @@ export function createMerchantApp(
     );
   }
 
+  // --- Latest x401 gate (opt-in): proof first, then the same x402 paywall ---
+  if (options.x401) {
+    const { gate, tokenEndpoint } = createX401Gate({
+      verifier: options.x401.verifier,
+      merchantName: options.x401.merchantName ?? "Mock VeryGood-RX",
+      network: config.network as `eip155:${number}`,
+      ledger,
+      ...(options.x401.sessionData !== undefined ? { sessionData: options.x401.sessionData } : {}),
+      ...(options.x401.tokenTtlSeconds !== undefined ? { tokenTtlSeconds: options.x401.tokenTtlSeconds } : {}),
+    });
+    app.post(X401_TOKEN_PATH, express.urlencoded({ extended: false }), tokenEndpoint);
+    app.use(X401_BUY_PREFIX, (req, res, next) => {
+      // Same replay guard as /buy: a retried purchase never re-enters payment.
+      const key = req.header(ORDER_HEADER);
+      const existing = key ? orders.findByIdempotencyKey(key) : undefined;
+      if (existing && existing.state !== "CREATED" && existing.state !== "QUOTED") {
+        return res.json({ replayed: true, order: existing });
+      }
+      next();
+    });
+    app.use(X401_BUY_PREFIX, gate);
+  }
+
   // --- The x402 paywall: challenges with 402, verifies on retry ---
-  app.use(paymentMiddleware(buildRoutes(config), resourceServer));
+  app.use(paymentMiddleware(buildRoutes(config, options.x401 ? ["/buy", X401_BUY_PREFIX] : ["/buy"]), resourceServer));
 
   // --- Fulfilment: runs after the payment verifies (settlement is async) ---
-  app.get("/buy/:sku", (req: Request, res: Response) => {
+  const fulfil = (req: Request, res: Response) => {
     const product = findProduct(req.params.sku ?? "");
     if (!product) return res.status(404).json({ error: "unknown sku" });
 
@@ -209,9 +251,13 @@ export function createMerchantApp(
         paymentNonce: nonce || undefined,
         settlement: "pending",
         pollUrl: nonce ? `/orders/by-nonce/${nonce}` : undefined,
+        // How the latest flow authorized it (who, under which proof); absent on /buy.
+        ...(res.locals.x401 ? { authorization: res.locals.x401 } : {}),
       },
     });
-  });
+  };
+  app.get("/buy/:sku", fulfil);
+  if (options.x401) app.get(`${X401_BUY_PREFIX}/:sku`, fulfil);
 
   // --- UCP-shaped payment_handler responder (opt-in, HAM-secured only) ---
   // options.ucp overrides UCP_MERCHANT_ENABLED (tests force it on regardless

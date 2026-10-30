@@ -9,3 +9,13 @@ export * from "./crypto.ts";
 export * from "./proof-credential.ts";
 export * from "./dcql.ts";
 export * from "./transaction-data.ts";
+
+// Latest-variant wallet: everything the in-page demo wallet runs (no Node built-ins).
+export * from "./proof-credential-v1.ts";
+export * from "./templates.ts";
+export * from "./client-metadata.ts";
+export * from "./dc-api-request.ts";
+export * from "./jws.ts";
+export * from "./wallet-v1.ts";
+export * from "./delegation.ts";
+export * from "./demo-wallet.ts";

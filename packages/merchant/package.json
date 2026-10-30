@@ -10,6 +10,7 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
+    "@agentic-payments/credentials": "*",
     "@agentic-payments/identity": "*",
     "@agentic-payments/shared": "*",
     "@x402/core": "^2.16.0",

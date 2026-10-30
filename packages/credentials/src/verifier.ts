@@ -15,7 +15,7 @@
  * history if a trust-pin override ever needs resurrecting.)
  */
 import { collect } from "@agentic-payments/shared";
-import type { Verifier } from "@sd-jwt/types";
+import type { Verifier } from "@sd-jwt/core";
 import { createSdJwtVc, type Jwk } from "./crypto.ts";
 import type {
   PresentationProof,
