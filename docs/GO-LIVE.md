@@ -6,7 +6,7 @@ Why a second service rather than flipping the public one: `LATEST_PROOF_MODE=liv
 
 ## What you need first
 
-- **A mailbox on the domain.** Any address on `thisisandrew.me` works; the steps use `admin@thisisandrew.me`. Proton is the domain's MX today.
+- **A mailbox on the domain.** Any address on `thisisandrew.me` works; the steps use `andrew@thisisandrew.me`, the account that holds the Fairfax credential. Proton is the domain's MX today.
 - **A Fairfax (sandbox) Proof identity** to approve presentations with — the one your recorded exhibit came from.
 - **Optional:** a Base Sepolia wallet with testnet USDC from faucet.circle.com, so the merchant can pay Proof for each presentation's signatures over x402. Without it, Proof has to bill a card on the account, or verification fails closed on the `402`.
 
@@ -38,7 +38,7 @@ Why a second service rather than flipping the public one: `LATEST_PROOF_MODE=liv
 5. **Enroll.** Do this once, with the same key file:
    ```bash
    npx @proof.com/proof-vc-server enroll https://x401.thisisandrew.me/.well-known/proof-client.json \
-     --email admin@thisisandrew.me --key private-key.pem --environment sandbox
+     --email andrew@thisisandrew.me --key private-key.pem --environment sandbox
    ```
    Click the activation link Proof sends to that inbox.
 
