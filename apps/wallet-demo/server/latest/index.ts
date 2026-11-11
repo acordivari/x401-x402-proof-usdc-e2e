@@ -207,7 +207,8 @@ export async function createLatestStack(cfg: LatestConfig, deps: { agentSigner: 
     emulatorUrl = `http://127.0.0.1:${(emulatorServer.address() as AddressInfo).port}`;
   }
 
-  // --- what the merchant uses to pay Proof for detached signatures ---
+  // --- what the merchant uses to pay Proof for detached signatures. Offline
+  //     it is always a throwaway key, whatever the environment holds. ---
   const verifierPayer = live
     ? cfg.proof.verifierEvmKey ? createLocalSigner(cfg.proof.verifierEvmKey) : undefined
     : createLocalSigner();

@@ -347,6 +347,29 @@ function resolveLatestConfig(
     }
   }
   const latestMode = env.LATEST_PROOF_MODE === "live" ? "live" : "local";
+  // The verifier's signing key and its paying wallet belong on the GATED live
+  // service only. On an open service they would sit one misconfiguration away
+  // from anonymous visitors, so their mere presence there refuses to boot —
+  // a loud failed deploy instead of a key quietly put to use. (2026-11: an
+  // enrolled-to-be key landed on the public demo, which published it.)
+  if (ctx.openAccess) {
+    for (const k of ["PROOF_VERIFIER_KEY", "PROOF_VERIFIER_EVM_KEY"] as const) {
+      if (env[k]) {
+        throw new Error(
+          `${k} is set on an open-access service (DEMO_OPEN_ACCESS=true). It belongs only on the gated live ` +
+            "verifier (LATEST_PROOF_MODE=live). Remove it from this service's environment. Refusing to boot.",
+        );
+      }
+    }
+  }
+  // Offline, the key is never used: the emulated verifier mints a throwaway key
+  // per boot, so a real key can't end up signing anything outside live mode.
+  if (verifierPrivateJwk && latestMode !== "live") {
+    if (env.NODE_ENV !== "test") {
+      console.warn("[demo] PROOF_VERIFIER_KEY is set but LATEST_PROOF_MODE is not live — ignoring it.");
+    }
+    verifierPrivateJwk = undefined;
+  }
   if (latestMode === "live") {
     if (!verifierPrivateJwk) {
       throw new Error("LATEST_PROOF_MODE=live needs PROOF_VERIFIER_KEY (the P-256 key published in the CIMD). Refusing to boot.");

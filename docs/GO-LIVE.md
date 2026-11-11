@@ -25,6 +25,8 @@ Why a second service rather than flipping the public one: `LATEST_PROOF_MODE=liv
 
    Render generates `DEMO_AUTH_TOKEN`, which is how you get past the gate; read it in the dashboard. The service won't boot without `PROOF_VERIFIER_KEY`, by design.
 
+   Set both keys on `agentic-payments-live` **only**. The public demo refuses to boot if it holds either one, so a key pasted on the wrong service shows up as a failed deploy instead of being published. If that happens, treat the key as exposed: generate a new one and enroll with that.
+
 3. **Point the subdomain.** In Cloudflare DNS for `thisisandrew.me`, add a `CNAME` named `x401` targeting the new service's `<name>.onrender.com` host. Set it to **DNS only** (grey cloud) so Render can issue the TLS certificate. Then confirm the domain under the service's *Custom Domains* in Render. The apex site on Netlify is untouched.
 
 4. **Check what Proof will fetch.** Load the page once first to wake the service, since the free plan cold-starts in ~50 s. Then:

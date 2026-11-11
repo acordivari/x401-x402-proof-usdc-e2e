@@ -21,6 +21,19 @@ describe("latest variant config", () => {
     expect(resolveDemoConfig({ ...base, PROOF_MODE: "live", PROOF_VERIFIER_KEY: pem, PUBLIC_ORIGIN: "https://shop.example" }).latest.mode).toBe("local");
   });
 
+  it("never uses a real verifier key offline — the emulated verifier mints its own", () => {
+    const cfg = resolveDemoConfig({ ...base, PROOF_VERIFIER_KEY: pem, PUBLIC_ORIGIN: "https://shop.example" });
+    expect(cfg.latest.mode).toBe("local");
+    expect(cfg.latest.proof.verifierPrivateJwk).toBeUndefined();
+  });
+
+  it("refuses to boot an open-access service holding the verifier key or its paying wallet", () => {
+    const open = { X401_ENCRYPTOR_KEY: base.X401_ENCRYPTOR_KEY, DEMO_SESSION_SECRET: "s", NODE_ENV: "production", DEMO_OPEN_ACCESS: "true" };
+    expect(() => resolveDemoConfig({ ...open, PROOF_VERIFIER_KEY: pem })).toThrow(/PROOF_VERIFIER_KEY is set on an open-access service/);
+    expect(() => resolveDemoConfig({ ...open, PROOF_VERIFIER_EVM_KEY: `0x${"ab".repeat(32)}` })).toThrow(/PROOF_VERIFIER_EVM_KEY is set on an open-access service/);
+    expect(resolveDemoConfig(open).latest.mode).toBe("local"); // the public demo itself still boots
+  });
+
   it("refuses an incomplete live request instead of silently running offline", () => {
     expect(() => resolveDemoConfig({ ...base, LATEST_PROOF_MODE: "live", PUBLIC_ORIGIN: "https://shop.example" })).toThrow(/PROOF_VERIFIER_KEY/);
   });
