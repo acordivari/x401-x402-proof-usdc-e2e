@@ -157,7 +157,7 @@ services:
   #   3. Enroll the verifier once the domain serves its metadata (docs/GO-LIVE.md):
   #        npx @proof.com/proof-vc-server enroll \
   #          https://x401.thisisandrew.me/.well-known/proof-client.json \
-  #          --email admin@thisisandrew.me --key private-key.pem --environment sandbox
+  #          --email andrew@thisisandrew.me --key private-key.pem --environment sandbox
   # ---------------------------------------------------------------------------
   - type: web
     name: agentic-payments-live
