@@ -29,7 +29,7 @@ import {
   type RevocationChecker,
 } from "@agentic-payments/identity";
 import { findProduct, productPriceAtomic } from "./catalog.ts";
-import { decodePaymentAuthorization } from "./x402-headers.ts";
+import { canonicalSku, decodePaymentAuthorization } from "./x402-headers.ts";
 import type { SpendLedger } from "./spend-ledger.ts";
 
 // The spend-cap ledger seam (in-memory / file / http) lives in `spend-ledger.ts`.
@@ -67,9 +67,12 @@ export function createMandateGate(opts: MandateGateOptions) {
   const now = opts.now ?? nowSeconds;
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    const sku = req.path.replace(/^\//, "");
-    const product = findProduct(sku);
-    if (!product) return next(); // unknown sku — let the route 404 normally
+    // Fail closed on anything but the canonical `/<sku>`: a lenient spelling
+    // (`/ibuprofen-200/`, `%2D`) would otherwise skip this gate yet still match
+    // the paywall and the fulfilment route.
+    const sku = canonicalSku(req.path);
+    const product = sku ? findProduct(sku) : undefined;
+    if (!product) return deny(res, 404, "unknown sku");
 
     const intent = decodeMandateHeader(req);
     if (!intent) return deny(res, 401, "authorization mandate required");
@@ -121,14 +124,17 @@ export function createMandateGate(opts: MandateGateOptions) {
     }
 
     const payment = decodePaymentAuthorization(req);
+    // A payment header we cannot read in full (or two different ones) is refused,
+    // never treated as "unpaid" — x402 might still verify the one we did not read.
+    if (payment.present && !payment.complete) return deny(res, 400, "malformed or ambiguous payment header");
     // Unpaid challenge: scope is good — let the x402 paywall emit its 402.
-    if (!payment.nonce || !payment.value || !payment.from) return next();
+    if (!payment.present || !payment.nonce || !payment.value || !payment.from) return next();
 
     // Paid request: the payer identity derived from the signed EIP-3009
     // authorization (`from` + the chain it settles on — the non-settling verify
     // step) must match the mandate's bound agent, chain id included when the
     // intent carries a wallet-native did:pkh agentId. A mismatch is refused
-    // BEFORE settlement with the normative `payer_agent_mismatch` error. The
+    // BEFORE settlement with the proposed `payer_agent_mismatch` error. The
     // signed amount is caught below by Payment ⊆ Cart (the cart total is the
     // catalog price, not the agent's figure).
     const payerScope = validatePayerAgainstIntent(

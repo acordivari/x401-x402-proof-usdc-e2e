@@ -80,6 +80,11 @@ pay. Mainnet is one explicit `--mainnet --yes` away. See
 
 ## Docs
 
+- **[Aligning with Proof's October 2026 x401 stack](docs/PROOF-ALIGNMENT-2026-10.md)** —
+  what Proof shipped, what the latest variant adopts, what's emulated, and what going
+  live still needs.
+- **[Going live on x401.thisisandrew.me](docs/GO-LIVE.md)** — the six-step runbook for the
+  gated live verifier (second Render service, Cloudflare DNS, Proof enrollment).
 - **[Live Buyer](docs/LIVE-BUY.md)** — discover + pay real x402 endpoints
   with wallet-side guardrails (the path out of the sandbox).
 - **[Architecture & Decisions](docs/ARCHITECTURE.md)** — the product-owner's
@@ -87,43 +92,49 @@ pay. Mainnet is one explicit `--mainnet --yes` away. See
 - **[HAM Protocol Spec](docs/HAM-PROTOCOL.md)** — the Human Authorization Mandate
   data model, verification rules, and threat model.
 - **[x401 + Proof VC Authorization](docs/X401-PROTOCOL.md)** — combining x401
-  identity proof with x402 payment: selective-disclosure verifiable credentials
-  (DCQL) bound to the specific payment via `transaction_data`.
+  identity proof with x402 payment, for both variants: the latest (merchant-verifier,
+  signed DC API requests, Sign Transactions templates, Delegate Authority) and the
+  July build (sealed-challenge binding, server-signed mandate).
 
 ## x401 wallet demo — who authorized this agentic payment?
 
 ```bash
-npm run demo           # PROOF_MODE=local (offline): build web + boot orchestrator
+npm run demo           # offline by default: build web + boot orchestrator
 npm run demo:web       # in another shell for live-reload dev (Vite on :5173)
 # then open http://localhost:4040
 ```
 
-A browser wallet (Vite + Svelte) shows the whole handshake on screen: the human
-selectively discloses identity claims via a **DCQL** query **and** authorizes the
-exact payment (`transaction_data`) in one SD-JWT-VC presentation; the verifier
-checks the credential + nonce + payment binding, issues a signed HAM Intent, and
-the agent settles over x402.
+Requires **Node ≥ 22.12** (the Proof SDKs need it; `.nvmrc` pins 22). The page has
+two variants, toggled from the strip at the top (`?variant=latest|july`, remembered
+per browser):
 
-### Three wallet workflows (`WALLET_FLOW`, switchable live in the UI)
+### Latest (default) — Proof's October 2026 stack
 
-1. **Self-issued** — browser-held local SD-JWT-VC, selective disclosure in-browser,
-   you approve each purchase. Fully offline (`PROOF_MODE=local`).
-2. **Proof-hosted** — the real Proof hosted presentation, driven by the official
-   **`@proof.com/proof-vc-server`** SDK (`authorizationUrl` + PAR +
-   `verifyVPToken`, pinned to Proof's trust store via `trustRoot`) with Proof's
-   **`<proof-verify-id>`** web component (`@proof.com/proof-vc-web`). Set
-   `PROOF_CLIENT_ID`/`PROOF_CLIENT_SECRET`, `PROOF_LOGIN_HINT`, `PROOF_ENVIRONMENT`.
-3. **Delegated (autonomous)** — the headline path: the human presents **once** to
-   sign a durable, scoped **mandate** (allowlist + budget cap + expiry); the agent
-   then buys **many** times over x402 with **no per-purchase approval** — the
-   presigned identity is the standing authorization. The merchant's cumulative-cap
-   ledger denies an over-budget buy on its own, and the issuer can **revoke** the
-   mandate early (`/api/mandate/revoke`) — the merchant then refuses any further
-   spend against it, even though the signed Intent is still valid and unexpired.
+The **merchant is the x401 verifier**. Its `/x401/buy/:sku` answers `401` with a
+`PROOF-REQUEST` carrying a **signed DC API request** (`openid4vp-v1-signed`) with the
+exact basket as a `payment-itemized:v1` term. The verifier's identity is a **Client ID
+Metadata Document** it hosts at `/.well-known/proof-client.json`, so there's no OAuth app
+or client secret. The agent hands the request to a wallet, exchanges the result for a
+**Verification Token**, retries, gets `402`, pays over x402, and gets `200`.
+
+- **Three wallet paths:** the demo wallet in the page, **Proof's Cloud Wallet** via an
+  x401 handoff with a return channel (emulated offline), or the browser's Digital
+  Credentials API (`navigator.credentials.get`).
+- **x402-paid presentations:** presentations arrive with their signatures detached,
+  and the merchant buys them back from (emulated) Proof over x402 before it can verify.
+- **Standing mandates as Delegate Authority:** the person's **credential key** signs
+  a mandate naming the agent's key. The terms are Proof's `payment_mandate_v1`, and
+  the merchant enforces the budget, scope, expiry and revocation itself.
+
+### July 2026 — preserved as shipped
+
+The original UI and flows: self-issued, Proof-hosted (redirect + paste-back,
+`<proof-verify-id>`), and the delegated mandate signed by our Authorization Service.
+They run unchanged on the current SDKs.
 
 ```bash
-# the autonomous (delegated-mandate) demo, fully offline:
-WALLET_FLOW=delegated PROOF_MODE=local FACILITATOR_MODE=mock npm run demo
+# the July autonomous (delegated-mandate) flow, fully offline:
+WALLET_FLOW=delegated PROOF_MODE=local FACILITATOR_MODE=mock npm run demo   # then pick "July 2026"
 ```
 
 ## Why TypeScript
@@ -207,8 +218,8 @@ settlement are unchanged.
   holder-signed key-binding JWT — cryptographic proof the human approved *this*
   payment, not just "some payment".
 - **Issuer trust:** Proof signs with an ES256 **x5c** certificate chain; the live SDK
-  verifier pins it to Proof's committed trust store via `trustRoot`
-  (`development`/`production`). The fallback verifier pins by CA fingerprint/root PEM.
+  verifier pins it to Proof's committed trust store, selected by environment since
+  proof-vc-server 0.5 (`sandbox` → the development root, `production` → Proof Root CA R1).
 
 Flow: `PROOF-REQUEST (DCQL + payment) → wallet presentation (vp_token) → verify
 (credential + holder + nonce + payment) → signed HAM Intent → x402 settlement`. The
@@ -220,7 +231,7 @@ identity source for HAM thus becomes swappable: **OIDC → Intent** *or*
 
 ```bash
 npm install
-npm test          # vitest — 170+ tests across shared, merchant, identity, credentials, agent
+npm test          # vitest — 290+ tests across shared, merchant, identity, credentials, agent, both demo variants
 npm run typecheck # tsc --noEmit, strict
 ```
 

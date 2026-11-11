@@ -81,6 +81,7 @@ import {
   type ProofExhibitRecording,
 } from "./exhibit.ts";
 import { FLOWS, resolveDemoConfig, type DemoConfig, type Flow } from "./config.ts";
+import { createLatestStack, type LatestSession } from "./latest/index.ts";
 
 export { FLOWS, resolveDemoConfig, type DemoConfig, type Flow };
 
@@ -231,6 +232,8 @@ interface ClientSession {
   /** has this client passed the access-token gate? */
   authed: boolean;
   lastSeen: number;
+  /** State of the LATEST variant (server/latest/), isolated from the July fields above. */
+  latest?: LatestSession;
 }
 
 export interface DemoApp {
@@ -388,6 +391,23 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
 
   const signer = createLocalSigner();
 
+  // --- the LATEST variant: the merchant becomes the x401 verifier (CIMD
+  //     identity, signed DC API requests, Proof's current templates), and the
+  //     orchestrator only relays. Built before the merchant, which mounts it. ---
+  const latest = await createLatestStack(
+    {
+      ...cfg.latest,
+      network: cfg.network as `eip155:${number}`,
+      merchantName: "Mock VeryGood-RX",
+      merchantPayTo: MERCHANT,
+      localIssuerId: ISSUER_ID,
+    } as Parameters<typeof createLatestStack>[0],
+    { agentSigner: signer },
+  );
+  console.log(
+    `[demo] latest variant: ${latest.mode === "live" ? "LIVE Proof" : "offline (emulated Proof)"} · verifier client_id ${latest.cimd.client_id}`,
+  );
+
   // --- boot the in-process merchant (mandate enforcement ON) ---
   // Revocation channel selection. In "http" mode the merchant reads the issuer's
   // status endpoint over HTTP (fail-closed) instead of sharing the registry object
@@ -428,7 +448,12 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
 
   const merchant = createMerchantApp(
     { facilitatorMode: "mock", payTo: MERCHANT },
-    { mandateVerifier, revocation: revocationChecker, ...(spendLedger ? { ledger: spendLedger } : {}) },
+    {
+      mandateVerifier,
+      revocation: revocationChecker,
+      ...(spendLedger ? { ledger: spendLedger } : {}),
+      x401: latest.merchantX401,
+    },
   );
   const merchantServer = await new Promise<Server>((resolve) => {
     const s = merchant.app.listen(MERCHANT_PORT, () => resolve(s));
@@ -488,6 +513,7 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
       }
       sess.lastSeen = Date.now();
       res.locals.sess = sess;
+      res.locals.sid = sid;
       if (req.method !== "GET") {
         const finalSid = sid;
         res.on("finish", () => {
@@ -533,7 +559,10 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
   /** Per-IP write counters — only installed when the demo is public AND ungated. */
   const writeAttempts = new Map<string, { count: number; resetAt: number }>();
   const writeLimiter: RequestHandler = (req, res, next) => {
-    if (req.method === "GET" || !req.path.startsWith("/api/")) return next();
+    // /api/* plus the latest variant's public POSTs (the x401 return channel and
+    // the emulated Proof wallet provider), which sit outside /api by protocol.
+    const limited = req.path.startsWith("/api/") || req.path.startsWith("/x401/") || req.path.startsWith("/emulator/");
+    if (req.method === "GET" || !limited) return next();
     const retryAfter = retryAfterFor(writeAttempts, req.ip ?? "unknown", PUBLIC_WRITE_MAX_PER_MIN);
     if (retryAfter > 0) {
       res.setHeader("Retry-After", String(retryAfter));
@@ -1086,6 +1115,17 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
     res.json({ ok: true });
   });
 
+  // --- the latest variant's routes: /api/latest/*, the CIMD, the x401 return
+  //     channel, and (offline) the emulated Proof wallet provider ---
+  latest.mount(app, {
+    merchantUrl,
+    indexHtmlPath: path.join(publicDir, "index.html"),
+    sessionOf: (res) => res.locals.sess as ClientSession,
+    sidOf: (res) => res.locals.sid as string,
+    loadSession: async (sid) => sessionStore.get(sid),
+    saveSession: async (sid, s) => { await sessionStore.set(sid, s as ClientSession); },
+  });
+
   return {
     app,
     merchantServer,
@@ -1094,6 +1134,7 @@ export async function createDemoApp(config?: DemoConfig, deps?: DemoAppDeps): Pr
     defaultFlow: DEFAULT_FLOW,
     close: () => new Promise<void>((resolve) => {
       clearInterval(sweep);
+      latest.close();
       issuerStatusServer?.close();
       ledgerServer?.close();
       merchantServer.close(() => resolve());

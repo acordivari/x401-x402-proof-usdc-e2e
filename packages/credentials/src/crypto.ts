@@ -11,7 +11,7 @@ import {
   uint8ArrayToBase64Url,
 } from "@owf/identity-common";
 import { SDJwtVcInstance } from "@sd-jwt/sd-jwt-vc";
-import type { Hasher, KbVerifier, SaltGenerator, Verifier } from "@sd-jwt/types";
+import type { Hasher, KbVerifier, SaltGenerator, Verifier } from "@sd-jwt/core";
 
 /** A JSON Web Key (public or private). */
 export type Jwk = Record<string, unknown>;

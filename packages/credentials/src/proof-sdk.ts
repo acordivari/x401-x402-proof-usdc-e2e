@@ -1,21 +1,24 @@
 /**
- * Live Proof path built on the official Proof VC SDK. Since 0.3.1 the SDK is
- * split: `@proof.com/proof-vc-server` carries the verifier, transaction_data
- * and the server-side request client (and re-exports the client/DCQL half,
- * `@proof.com/proof-vc-common`). Two server-side capabilities:
+ * Live Proof path for the July flows, built on the official Proof VC SDK
+ * (`@proof.com/proof-vc-server`, which re-exports `@proof.com/proof-vc-common`).
+ * Two server-side capabilities:
  *
  *   - `proofSdkVcVerifier()` : a `VerifiableCredentialVerifier` that delegates
- *     to the SDK's `createVerifier(trustRoot).verifyVPToken`. The SDK decodes
- *     the DCQL `vp_token` envelope, verifies each SD-JWT-VC's issuer x5c chain
- *     against Proof's committed trust store (`trustRoot`, pinning Proof's
- *     actual Root CA), and verifies the holder KB-JWT signature. Since 0.3.x
- *     the SDK does NOT compare the OID4VP nonce itself — it exposes it via
- *     `ProofCredential.getNonce()` — so the nonce↔challenge equality check in
- *     this adapter is the load-bearing, fail-closed replay gate.
+ *     to the SDK's `createVerifier({ environment }).verifyVPToken`. The SDK
+ *     decodes the `vp_token` envelope, pins `iss` to the environment's issuer,
+ *     verifies each SD-JWT-VC's x5c chain against Proof's committed trust store
+ *     (the store follows the environment since 0.5), and verifies the holder
+ *     KB-JWT signature. The SDK does NOT compare the OID4VP nonce itself — it
+ *     exposes it via `ProofCredential.getNonce()` — so the nonce↔challenge
+ *     equality check in this adapter is the load-bearing, fail-closed replay gate.
  *   - `buildProofSdkAuthorizeUrl()` : builds the hosted OID4VP authorize URL
  *     via the SDK's server client (with Pushed Authorization Requests, so the
  *     client secret never leaves the server and the payment-mandate URL stays
  *     small).
+ *
+ * The latest flows (signed DC API requests, CIMD client ids, detached
+ * signatures) live in `proof-sdk-v1.ts`; this file only keeps the July wiring
+ * running on the current SDK.
  *
  * Server-only (handles the client secret + Node trust store), so this lives in
  * the node barrel (`index.ts`) and NOT the browser barrel. The x401
@@ -31,7 +34,6 @@ import {
   type ServerClientConfig,
   type ServerVCClient,
   type TransactionData,
-  type TrustRoot,
   type Verifier,
 } from "@proof.com/proof-vc-server";
 import { collect } from "@agentic-payments/shared";
@@ -41,6 +43,17 @@ import type {
   VerifiableCredentialVerifier,
   VerifyPresentationInput,
 } from "./types.ts";
+
+/**
+ * Which committed Proof trust store to pin to. The SDK selected this directly
+ * through 0.3.x; since 0.6 it derives the store from the environment
+ * (`sandbox` → development roots, `production` → production roots) and also
+ * pins `iss` to that environment's issuer. The July flows keep speaking in
+ * trust roots, so the mapping lives here, in one place.
+ */
+export type TrustRoot = "development" | "production";
+export const environmentForTrustRoot = (t: TrustRoot): "sandbox" | "production" =>
+  t === "production" ? "production" : "sandbox";
 
 /** Re-export the SDK's transaction-data builders (payment-mandate, etc.). */
 export { proofTransactionData };
@@ -84,7 +97,7 @@ let sdkTrustRoot: TrustRoot | undefined;
 export function configureProofSdk(params: ProofSdkConfig): void {
   if (sdkVerifier) return;
   sdkTrustRoot = params.trustRoot ?? "development";
-  sdkVerifier = createVerifier({ trustRoot: sdkTrustRoot });
+  sdkVerifier = createVerifier({ environment: environmentForTrustRoot(sdkTrustRoot) });
   if (params.environment && params.clientId && params.callbackUri) {
     sdkClient = createClient({
       environment: params.environment,
@@ -130,6 +143,13 @@ export function proofSdkVcVerifier(opts: ProofSdkVerifierOptions = {}): Verifiab
         const vpt = await sdkVerifier.verifyVPToken({ encodedVPToken: input.vpToken });
         const cred = vpt[PROOF_CREDENTIAL_ID]?.[0];
         if (!cred) throw new Error(`vp_token carried no '${PROOF_CREDENTIAL_ID}' credential`);
+        // Since 0.5 the SDK only WARNS on an unknown vct and hands it back as a
+        // DefaultProofCredential. Through 0.3 that was a hard failure, and the
+        // adapter keeps it one: a credential type we did not ask for is not
+        // the identity we are about to bind a mandate to.
+        if (cred.credentialType() !== "ProofCredentialV1") {
+          throw new Error(`unexpected credential type ${cred.credentialType()} (want ProofCredentialV1)`);
+        }
 
         const claims = cred.getClaims();
         issuer = typeof claims.iss === "string" ? claims.iss : undefined;
@@ -142,7 +162,7 @@ export function proofSdkVcVerifier(opts: ProofSdkVerifierOptions = {}): Verifiab
         }
 
         // The SDK verified the KB-JWT *signature*; comparing its nonce to our
-        // challenge is on us (0.3.x exposes it via getNonce()). A mismatch is a
+        // challenge is on us (the SDK exposes it via getNonce()). A mismatch is a
         // replayed or cross-session presentation → hard violation.
         nonceBound = cred.getNonce() === input.nonce;
 

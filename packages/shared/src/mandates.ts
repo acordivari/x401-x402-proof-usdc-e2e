@@ -190,8 +190,10 @@ export function validateCartAgainstIntent(
  * The payer identity is derived from the signed payment authorization (the
  * EIP-3009 `from` plus the chain the payment settles on) and must match the
  * intent's wallet binding; when the intent carries a wallet-native `agentId`
- * (did:pkh), the chain id is part of the identity. Violations carry the PR's
- * normative `payer_agent_mismatch` error token. Pure — no crypto here.
+ * (did:pkh), the chain id is part of the identity. Violations carry the
+ * `payer_agent_mismatch` error token of the proposed wallet-native agent
+ * identifier profile (not yet in the published x401 0.2.0 spec). Pure — no
+ * crypto here.
  */
 export function validatePayerAgainstIntent(
   payer: { address: string; network: `eip155:${number}` },

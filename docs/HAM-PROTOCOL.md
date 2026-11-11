@@ -166,7 +166,8 @@ On each `/buy`, the gate (`mandate-gate.ts`) enforces, in order:
      settles on) must match `agentWallet` — and, when the Intent carries a
      wallet-native `agentId` (did:pkh), the **chain id is part of the
      identity**. A mismatch is refused *before settlement* with the
-     normative `payer_agent_mismatch` error,
+     `payer_agent_mismatch` error (from the proposed wallet-native agent
+     identifier profile — not part of the published x401 0.2.0 spec),
    - **Payment ⊆ Cart** (`validatePaymentAgainstCart`): `payTo == merchant` and
      `amount == cart.total` — i.e. the agent signed for **exactly the merchant's
      price**.
@@ -226,7 +227,29 @@ freshness/`nonce` binding to the OIDC `nonce` claim is not yet enforced.
   the actual payment/settlement; HAM is the authorization gate that decides
   whether a given x402 payment is *allowed* to proceed.
 
-## 9. Roadmap
+## 9. HAM v2 in the latest variant: Delegate Authority
+
+The latest variant (`apps/wallet-demo/server/latest/`) keeps HAM's goal and moves
+its trust anchor. A v1 Intent is signed by **our Authorization Service**, so a
+merchant has to trust that service. A v2 mandate is signed by **the key bound into the
+person's own credential** and names the agent's key, so a merchant walks agent → holder
+credential → issuer and trusts nobody in between.
+
+| | v1 (July) | v2 (latest) |
+|---|---|---|
+| Signed by | the Authorization Service (EdDSA) | the holder's credential key (ES256, L2) |
+| Identity | principal copied in after a verified presentation | the credential itself (L1), selectively disclosed |
+| Agent binding | `agentWallet` / `agentId` field | `cnf` = agent key (signs each L3) + `agent_id` (the x402 payer) |
+| Scope | `maxAmount`, `merchantAllowlist`, `allowedCategories` | `mandate.payment.budget`, `amount_range`, `allowed_payees`, `x-agentic-payments.allowed_categories` |
+| Human-readable terms | the UI's summary | Proof's `payment_mandate_v1`, signed in L2 and checked against the constraints |
+| Per purchase | Cart/Payment derived by the merchant | the agent's L3 over the merchant's nonce + the checkout, then the same catalog-price and payer checks |
+| Cumulative cap, revocation | `SpendLedger`, `RevocationChecker` | the same seams, keyed by the mandate's `jti` |
+
+The wire format and checks are in [X401-PROTOCOL.md §L6](./X401-PROTOCOL.md). The
+format follows Verifiable Intent's autonomous mode, with two simplifications stated
+there. Proof's own Delegate Authority is early access, so v2 runs offline only.
+
+## 10. Roadmap
 
 - Publish the AS key as a **JWKS** the merchant fetches (real trust distribution).
 - Bind the OIDC **`nonce`/`at_hash`** to the Intent to prevent token replay.

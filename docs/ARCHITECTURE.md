@@ -87,7 +87,8 @@ packages/
   identity/   OIDC verifier (local + Auth0) + mandate SIGNING/VERIFICATION
               + the Authorization Service
 apps/
-  wallet-demo/ browser wallet demo (x401 VC presentation -> HAM -> x402)
+  wallet-demo/ two-variant demo: LATEST (merchant-verifier x401 -> x402) and
+               JULY 2026 (x401 VC presentation -> HAM -> x402), toggled in-page
 ```
 
 ### The two flows
@@ -137,6 +138,13 @@ Short ADR-style log. Each is a real fork we took, with the reasoning.
 | 11 | **x401 + Proof VCs as the identity source for HAM** | Replace OIDC→Intent with a verifiable-credential presentation→Intent: the human selectively discloses identity (DCQL) and authorizes the payment (`transaction_data`) in one SD-JWT-VC presentation, which the AS verifies before signing the Intent. x402/merchant unchanged. | Proves "who authorized *this* payment". Proof's flow is a human-in-the-loop redirect, so it's an up-front step, not a per-request gate. See [X401-PROTOCOL.md](./X401-PROTOCOL.md). |
 | 12 | **VC seam built on the Proof/SD-JWT stack** | `packages/credentials` uses `@sd-jwt/sd-jwt-vc` + `@owf/crypto` (Proof's own libs, WebCrypto) so the same code issues/holds/presents/verifies offline AND runs in the browser wallet. `VerifiableCredentialVerifier` = `localVcVerifier` (mock) / `proofSdkVcVerifier` (live, official SDK). | Live Proof is a config swap (`PROOF_MODE=live`). The mock implements the real interface, so tests exercise the real verification path. |
 | 13 | **Build-based (Vite + Svelte) wallet demo** | The wallet needs to bundle `@sd-jwt/*` for *real* in-browser selective disclosure + animated protocol visuals, which the no-build console (decision 10) can't do cleanly. | A second app (`apps/wallet-demo`); the original console coexisted no-build until it was retired (see decision 10). |
+| 14 | **Preserve July as a variant, not a branch** (2026-10) | The July UI is the artifact people have seen and the recorded exhibit's home; deleting it to make room would erase the comparison the overhaul is about. A shell (`src/App.svelte`) loads exactly one variant per page via dynamic import, chosen by `?variant=` or the visitor's last choice. | Switching is a full navigation — the July app never tears down its timers, and custom elements can be defined once per document. One loader function per view: a ternary of `import()`s gets minified into one preload call carrying one chunk's CSS. |
+| 15 | **The merchant is the x401 verifier** (latest) | Proof's model puts the verifier at the protected route: it signs the request, and only it can say what the proof unlocks. The July orchestrator-as-verifier was a stand-in for a merchant that couldn't speak x401. | The orchestrator shrinks to a user agent (relay + retry). `/buy` and the July flow are untouched; the latest gate lives on `/x401/buy` and reuses the same paywall, ledger and revocation seams. |
+| 16 | **CIMD identity, signed DC API requests** (latest) | Proof retired the OAuth app + secret for x401 verifiers: the `client_id` is a metadata URL publishing an ES256 key. Signed `openid4vp-v1-signed` request objects are what every wallet path (native, handoff, demo) accepts. | Live enrollment needs a domain we control (public-suffix hosts are refused). Offline, the same CIMD is served and the emulator resolves it in-process. |
+| 17 | **Token exchange between the 401 and the 402** (latest) | The nonce is single-use, and x402 takes two round trips. x401's OAuth token exchange turns the Result Artifact into a route-bound Verification Token that survives the 402. | The direct Result Artifact retry is also accepted (the spec requires it); there the nonce is checked on the 402 leg and burned before settlement. |
+| 18 | **Sign Transactions per use case** (latest) | Proof now has a template per use case: `payment-itemized:v1` is the honest shape for one checkout, and `payment-mandate:v1` for a standing grant. The KB-JWT returns each payload verbatim, so "terms match" is a direct comparison instead of our sealed-digest workaround. | The SDK signs one template per DC API request; the local signer adds `session-data` too. |
+| 19 | **x402-paid presentations, emulated wire-for-wire** (latest) | Paying for identity with the same rail the agent pays for goods is the most distinctive new Proof capability. Emulating `/x401-signatures` (client assertion → 402 → paid 200) behind a real x402 paywall makes the public demo show it with no Proof account. | The emulator uses Proof's published sandbox `payTo` and a mock facilitator. Nothing settles on-chain, and the UI labels it emulated. |
+| 20 | **HAM v2 = Delegate Authority** (latest) | A server-signed Intent (decision 7) asks merchants to trust our Authorization Service. A mandate signed by the **holder's credential key**, naming the agent's key, chains to the issuer instead, and no server vouches. The format follows Verifiable Intent, which Proof cites; the readable terms are Proof's `payment_mandate_v1`. | Proof's Delegate Authority is early access, so this runs offline only. The merchant still enforces the stateful parts (cumulative budget, revocation) through the existing seams. |
 
 ---
 
@@ -154,6 +162,7 @@ state"). Each is enforced in code **and** covered by tests.
 | Human actually authorized | EdDSA Intent signature verified against the Authorization Service's trusted key | `identity/mandate.ts`, `merchant/mandate-gate.ts` |
 | Spend stays in budget | `Payment ⊆ Cart ⊆ Intent` (per-purchase cap) **plus** a cumulative **reserve→commit/release** ledger tied to settlement | `merchant/mandate-gate.ts` |
 | No leaked reservations | A reservation is released if the request doesn't end `200` | `merchant/mandate-gate.ts` (regression-tested) |
+| No gate bypass by spelling | Gates answer only the canonical `/<sku>` (404 otherwise) and read the payment header exactly as x402 does, refusing malformed or conflicting ones. Found in the Oct 2026 review in both gates | `merchant/x402-headers.ts`, both gates (`x401-gate-regressions`, `e2e-mandate`) |
 
 **Testing:** 170+ unit + integration tests (Vitest). The offline end-to-end
 suites run the full agent→merchant→facilitator round trip with **no keys or
@@ -194,7 +203,9 @@ catalog-price fix above).
 | Orchestrator access control + per-client session isolation | ✅ signed-cookie sessions, isolated in every posture; gated (`DEMO_AUTH_TOKEN`) or deliberately open (`DEMO_OPEN_ACCESS`, + a 120/min/IP write cap), fail-closed if exposed with neither (`e2e-demo-auth`, `e2e-demo-open`) |
 | **Live** Base Sepolia settlement | ⏳ needs free CDP key + faucet USDC |
 | **Real** Auth0 identity | ⏳ one-line `auth0Verifier` swap + tenant creds |
-| **Live** Proof VC presentation | ⏳ `PROOF_MODE=live` + Proof OAuth app (`PROOF_CLIENT_ID`, registered redirect URI, sandbox user email) |
+| **Live** Proof VC presentation (July) | ⏳ `PROOF_MODE=live` + Proof OAuth app (`PROOF_CLIENT_ID`, registered redirect URI, sandbox user email) |
+| Latest variant: merchant-verifier x401, token exchange, Sign Transactions, x402-paid signatures, handoff, Delegate Authority | ✅ offline (`server/latest/`, `e2e-latest`) |
+| **Live** latest variant (Proof Cloud Wallet + Proof SDK verifier) | ⏳ an enrolled CIMD on a domain we control (`PUBLIC_ORIGIN`, `PROOF_VERIFIER_KEY`), plus `PROOF_VERIFIER_EVM_KEY` with testnet USDC to pay for signatures |
 
 ### Deferred for production (intentional in-process seams — swap, don't rewrite)
 
@@ -263,4 +274,7 @@ running the Vitest UI server, which we never do). Their fixes are major-version 
 | x401 + Proof VC seam (SD-JWT-VC, DCQL, transaction_data, verifier) | `packages/credentials/src/` |
 | VC→Intent issuance | `packages/identity/src/mandate.ts` (`issueIntentFromPresentation`) |
 | Agent wallet + x402 client | `packages/agent/src/{wallet,x402-client,buyer}.ts` |
-| x401 wallet demo (VC → HAM → x402) | `apps/wallet-demo/` |
+| x401 wallet demo, July variant (VC → HAM → x402) | `apps/wallet-demo/src/variants/july/`, `server/index.ts` |
+| x401 latest variant (merchant-verifier → token → x402) | `apps/wallet-demo/src/variants/latest/`, `server/latest/` |
+| Latest x401 verifier core / merchant gate | `packages/credentials/src/x401-verifier-v1.ts`, `packages/merchant/src/x401/gate.ts` |
+| Signed DC API requests, CIMD, templates, Delegate Authority | `packages/credentials/src/{dc-api-request,client-metadata,templates,delegation}.ts` |

@@ -120,6 +120,31 @@ describe("merchant enforces the Human Authorization Mandate", () => {
     expect(await pollSettled(body.receipt.paymentNonce)).toBe("SETTLED");
   });
 
+  it("a non-canonical path is a 404, never an unguarded purchase", async () => {
+    // Express and the x402 matcher both accept `/sku/` and `%2D`; the gate must
+    // not wave those through to a paywall that still charges for them.
+    for (const p of ["allergy-relief-24/", "allergy%2Drelief-24"]) {
+      const { status } = await buy(createLocalSigner(), p, undefined, `noncanon-${p}`);
+      expect(status).toBe(404);
+    }
+  });
+
+  it("a decoy X-Payment header cannot blind the gate to the real payment", async () => {
+    // Intent bound to wallet A; a stranger pays, hiding behind a decoy header the
+    // gate used to read instead of the PAYMENT-SIGNATURE x402 actually verifies.
+    const a = createLocalSigner();
+    const intent = await issueIntentFor(a.address, { maxAmount: "5000000", categories: ["vitamins"] });
+    const strangerFetch = await createPayingFetch(createLocalSigner());
+    const res = await strangerFetch(`${base}/buy/vitamin-d3-2000`, {
+      headers: {
+        "Idempotency-Key": "decoy-1",
+        "X-Authorization-Mandate": Buffer.from(JSON.stringify(intent)).toString("base64"),
+        "X-Payment": "e30=",
+      },
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("rejects a purchase with no mandate (401)", async () => {
     const signer = createLocalSigner();
     const { status } = await buy(signer, "allergy-relief-24", undefined, "no-mandate-1");

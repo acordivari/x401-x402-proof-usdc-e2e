@@ -1,6 +1,14 @@
 # Render blueprint for the wallet-demo orchestrator (apps/wallet-demo).
 #
-# One web service: it builds the Svelte SPA and then serves it from the same
+# Two web services from the same code:
+#   - agentic-payments-demo : the PUBLIC demo — ungated, fully offline (emulated Proof).
+#   - agentic-payments-live : the LIVE x401 verifier on x401.thisisandrew.me — gated,
+#                             talking to Proof's sandbox. See docs/GO-LIVE.md.
+# They are separate because live mode refuses to boot with open access: an ungated
+# live verifier would let any visitor start real Proof presentations and spend the
+# verifier's x402 wallet.
+#
+# Each service builds the Svelte SPA and then serves it from the same
 # Express process that hosts the API, so the browser only ever sees one origin —
 # no CORS, and the SameSite=Lax session cookie keeps working. Put a CDN in front
 # of this (e.g. a Netlify 200-rewrite of /api/* and /proof/*) only if you keep
@@ -27,8 +35,9 @@ services:
     # which is the point — there is nothing gated left for it to withhold.
     healthCheckPath: /api/me
     envVars:
+      # The Proof SDKs (proof-vc-server/common 0.6.x) require Node >= 22.12.
       - key: NODE_VERSION
-        value: "20"
+        value: "22"
 
       # --- posture: exposed => fail closed on every secret below ---
       - key: NODE_ENV
@@ -122,5 +131,94 @@ services:
       - key: PROOF_EXHIBIT_FILE
         value: /etc/secrets/.proof-recording.json
 
+      # --- LATEST variant. Its verifier identity (the CIMD at
+      #     /.well-known/proof-client.json) needs the public origin; Render injects
+      #     RENDER_EXTERNAL_URL, which the config uses when PUBLIC_ORIGIN is unset.
+      #     It runs OFFLINE here (emulated Proof): live needs LATEST_PROOF_MODE=live,
+      #     which DEMO_OPEN_ACCESS refuses, plus a verifier enrolled on a domain you own —
+      #     Proof rejects public-suffix hosts like onrender.com. See
+      #     docs/PROOF-ALIGNMENT-2026-10.md. ---
+      - key: LATEST_SIGNATURE_BILLING
+        value: x402
+
       # NOTE: DEMO_PORT is deliberately absent — Render injects PORT, which the
       # config prefers. Setting DEMO_PORT here would bind an unroutable port.
+
+  # ---------------------------------------------------------------------------
+  # The LIVE x401 verifier. Same build; a different posture.
+  #
+  # Before (or right after) the first deploy:
+  #   1. Cloudflare DNS for thisisandrew.me: CNAME `x401` -> this service's
+  #      <name>.onrender.com host, PROXY OFF (DNS only, grey cloud) so Render can
+  #      issue the certificate. Render verifies the domain listed under `domains`.
+  #   2. Fill the `sync: false` secrets in the dashboard (Render prompts for them
+  #      when the blueprint is applied). LATEST_PROOF_MODE=live REFUSES TO BOOT
+  #      without PROOF_VERIFIER_KEY, so the first deploy fails until it is set.
+  #   3. Enroll the verifier once the domain serves its metadata (docs/GO-LIVE.md):
+  #        npx @proof.com/proof-vc-server enroll \
+  #          https://x401.thisisandrew.me/.well-known/proof-client.json \
+  #          --email admin@thisisandrew.me --key private-key.pem --environment sandbox
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: agentic-payments-live
+    runtime: node
+    # `free` cold-starts in ~50s. Wake the service (load the page) before you
+    # enroll or present, so Proof's fetch of the metadata document is not the
+    # request that waits on the cold start.
+    plan: free
+    branch: main
+    buildCommand: npm ci --include=dev && npm run build:web
+    startCommand: npm run demo:server
+    healthCheckPath: /api/me
+    domains:
+      - x401.thisisandrew.me
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+
+      # --- ACCESS: gated. Live mode refuses DEMO_OPEN_ACCESS and DEMO_PUBLIC_TOKEN.
+      #     Render generates the token; read it in the dashboard and share it
+      #     privately. ---
+      - key: DEMO_AUTH_TOKEN
+        generateValue: true
+      - key: DEMO_SESSION_SECRET
+        generateValue: true
+      - key: X401_ENCRYPTOR_KEY
+        generateValue: true
+      - key: MERCHANT_PORT
+        value: "0"
+
+      # --- the latest variant, LIVE against Proof's Fairfax sandbox ---
+      - key: LATEST_PROOF_MODE
+        value: live
+      # The CIMD lives at <PUBLIC_ORIGIN>/.well-known/proof-client.json — its client_id.
+      - key: PUBLIC_ORIGIN
+        value: https://x401.thisisandrew.me
+      - key: PROOF_ENVIRONMENT
+        value: sandbox # => api.fairfax.proof.com (pinned; config refuses anything else)
+      - key: PROOF_TRUST_ROOT
+        value: development
+      # The verifier's P-256 private key, PEM. Its public half is the CIMD's jwks;
+      # it signs every request object and the client assertion that buys back
+      # detached signatures. `openssl ecparam -name prime256v1 -genkey -noout`.
+      - key: PROOF_VERIFIER_KEY
+        sync: false
+      # Optional: a Base Sepolia key holding testnet USDC (faucet.circle.com).
+      # The merchant pays Proof for each presentation's signatures with it, over
+      # x402. Unset => Proof must bill a card on the account, or verification
+      # fails closed on the 402.
+      - key: PROOF_VERIFIER_EVM_KEY
+        sync: false
+      # Optional default for whom Proof should ask (your Fairfax sandbox email).
+      # A visitor can enter their own in the UI; this is the fallback.
+      - key: PROOF_LOGIN_HINT
+        sync: false
+
+      # --- July variant on this service stays offline unless you add a Proof
+      #     OAuth app (PROOF_CLIENT_ID/SECRET) and PROOF_MODE=live. ---
+      - key: PROOF_MODE
+        value: local
+      - key: PROOF_EXHIBIT_FILE
+        value: /etc/secrets/.proof-recording.json

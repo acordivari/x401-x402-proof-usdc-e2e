@@ -13,6 +13,15 @@ export default defineConfig({
     proxy: {
       "/api": ORCHESTRATOR,
       "/proof": ORCHESTRATOR,
+      // Latest variant: the verifier's CIMD, the x401 return channel, and the
+      // emulated Proof wallet provider's APIs. The hosted wallet PAGE
+      // (/emulator/proof/wallet/:id) is deliberately not proxied — Vite serves
+      // the SPA for it in dev. Run the orchestrator with
+      // PUBLIC_ORIGIN=http://localhost:5173 so links and return_uris point here.
+      "/.well-known": ORCHESTRATOR,
+      "/x401": ORCHESTRATOR,
+      "/emulator/proof/handoff": ORCHESTRATOR,
+      "/emulator/proof/wallet/signatures": ORCHESTRATOR,
     },
   },
   build: { outDir: "dist", emptyOutDir: true },
